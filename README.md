@@ -1,2 +1,3 @@
 # Campus-Nature-Team
-Project
+Names:
+Sam Schlutsmeyer

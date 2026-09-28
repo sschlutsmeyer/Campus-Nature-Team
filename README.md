@@ -1,3 +1,7 @@
 # Campus-Nature-Team
-Project
+Names:
+Eshan Anand
+Sam Schlutsmeyer
 Isaiah Balandran
+
+

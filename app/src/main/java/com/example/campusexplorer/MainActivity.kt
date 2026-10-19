@@ -1,9 +1,5 @@
 package com.example.campusexplorer
 
-import android.Manifest
-import android.content.Context
-import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,258 +29,111 @@ import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import kotlinx.coroutines.launch
 
-private enum class Tab(
-    val label: String,
-    @param:DrawableRes val icon: Int
-) {
+// Switches between the Nature Quest design (true) and the plain tab bar layout (false).
+private const val USE_NATURE_QUEST_UI = true
+
+// The tabs in the bottom bar, each with a label and an icon from res/drawable.
+private enum class Tab(val label: String, @param:DrawableRes val icon: Int) {
     Map("Map", R.drawable.ic_map),
     Camera("Camera", R.drawable.ic_camera),
 }
 
+// The app's only screen. Everything is drawn by CampusExplorerApp below.
 class MainActivity : ComponentActivity() {
-import android.widget.Button
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
-import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
 
-class MainActivity : AppCompatActivity() {
-
-    private lateinit var map: MapView
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var sharedPrefs: SharedPreferences
-
-    /* =========================================
-       PERMISSION LAUNCHER
-       ========================================= */
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            recordCurrentLocation()
-        } else {
-            Toast.makeText(this, "Location permission required", Toast.LENGTH_SHORT).show()
-        }
-    }
-
+    // Runs once when the app opens.
     override fun onCreate(savedInstanceState: Bundle?) {
+
+        // Let Android do its own setup first.
         super.onCreate(savedInstanceState)
 
+        // Draw behind the status and navigation bars.
         enableEdgeToEdge()
 
+        // Set the UI, wrapped in our theme.
         setContent {
+
+            // Apply our colors and fonts.
             CampusExplorerTheme {
+
+                // Draw the app.
                 CampusExplorerApp()
             }
         }
     }
 }
 
+// The whole app: a bottom tab bar and the selected tab's screen.
 @Composable
 fun CampusExplorerApp() {
-    // true = Nature Quest design
-    // false = original navigation layout
-    val useNatureQuestUI = true
 
-    var tab by rememberSaveable {
-        mutableStateOf(Tab.Map)
-    }
+    // The selected tab. rememberSaveable keeps it when the phone rotates.
+    var tab by rememberSaveable { mutableStateOf(Tab.Map) }
 
-    val snackbar = remember {
-        SnackbarHostState()
-    }
+    // Controls the pop-up messages (snackbars) at the bottom of the screen.
+    val snackbar = remember { SnackbarHostState() }
 
+    // Used to show snackbars, which run in the background.
     val scope = rememberCoroutineScope()
 
-    val showMessage: (String) -> Unit = { message ->
-        scope.launch {
-            snackbar.showSnackbar(message)
-        }
-    }
+    // Shows a pop-up message. Passed to each screen.
+    val showMessage: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
+    // Standard page layout with slots for a bottom bar and snackbars.
     Scaffold(
+
+        // Fill the whole screen.
         modifier = Modifier.fillMaxSize(),
 
-        snackbarHost = {
-            SnackbarHost(snackbar)
-        },
+        // Where pop-up messages appear.
+        snackbarHost = { SnackbarHost(snackbar) },
 
+        // The plain tab bar. The Nature Quest design draws its own instead.
         bottomBar = {
-            if (!useNatureQuestUI) {
+
+            if (!USE_NATURE_QUEST_UI) {
                 NavigationBar {
-                    Tab.entries.forEach { currentTab ->
+
+                    // One button per tab.
+                    Tab.entries.forEach {
+
                         NavigationBarItem(
-                            selected = tab == currentTab,
 
-                            onClick = {
-                                tab = currentTab
-                            },
+                            // Highlight the selected tab.
+                            selected = tab == it,
 
-                            icon = {
-                                Icon(
-                                    painter = painterResource(
-                                        currentTab.icon
-                                    ),
-                                    contentDescription = null
-                                )
-                            },
+                            // Switch to this tab when tapped.
+                            onClick = { tab = it },
 
-                            label = {
-                                Text(currentTab.label)
-                            }
+                            // Tab icon and label.
+                            icon = { Icon(painterResource(it.icon), contentDescription = null) },
+                            label = { Text(it.label) },
                         )
                     }
                 }
             }
-        }
-    ) { innerPadding ->
-        if (useNatureQuestUI) {
+        },
+    )
+
+    // innerPadding is the space the bars take up, so content isn't hidden behind them.
+    { innerPadding ->
+
+        // Nature Quest design: its own header, frame, and tabs (see ui/MapCameraUI.kt).
+        if (USE_NATURE_QUEST_UI) {
+
             NatureQuestScreen(
-                mapContent = {
-                    MapScreen(
-                        modifier = Modifier.fillMaxSize()
-                    )
-                },
-
-                cameraContent = {
-                    CameraScreen(
-                        onMessage = showMessage,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                mapContent = { MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
+                cameraContent = { CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
             )
+
+        // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
         } else {
+
             val contentModifier = Modifier.padding(innerPadding)
-
             when (tab) {
-                Tab.Map -> {
-                    MapScreen(contentModifier)
-                }
-
-                Tab.Camera -> {
-                    CameraScreen(
-                        onMessage = showMessage,
-                        modifier = contentModifier
-                    )
-                }
+                Tab.Map -> MapScreen(onMessage = showMessage, modifier = contentModifier)
+                Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
             }
         }
-    }
-        Configuration.getInstance().userAgentValue = "CampusNatureQuest_BZ_1.0"
-        setContentView(R.layout.activity_main)
-
-        // Initialize Local Storage
-        sharedPrefs = getSharedPreferences("NatureQuestPrefs", Context.MODE_PRIVATE)
-
-        // Initialize Map
-        map = findViewById(R.id.mapView)
-        map.setTileSource(TileSourceFactory.MAPNIK)
-        map.setMultiTouchControls(true)
-        map.controller.setZoom(17.0)
-
-        // Default to Campus Coordinates
-        val startPoint = GeoPoint(34.1623, -119.0433)
-        map.controller.setCenter(startPoint)
-
-        // Initialize GPS Client
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-
-        // Button Listeners
-        findViewById<Button>(R.id.btnRecordSighting).setOnClickListener {
-            checkPermissionAndRecord()
-        }
-
-        findViewById<Button>(R.id.btnCenterLocation).setOnClickListener {
-            centerOnSavedObservation()
-        }
-
-        // Load previous sighting if it exists
-        loadLastObservation()
-    }
-
-    /* =========================================
-       LOCATION & STORAGE LOGIC
-       ========================================= */
-    private fun checkPermissionAndRecord() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            recordCurrentLocation()
-        } else {
-            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-    }
-
-    private fun recordCurrentLocation() {
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            if (location != null) {
-                val lat = location.latitude
-                val lon = location.longitude
-
-                // Save coordinates locally
-                sharedPrefs.edit()
-                    .putFloat("last_lat", lat.toFloat())
-                    .putFloat("last_lon", lon.toFloat())
-                    .apply()
-
-                placeMarkerAndCenter(lat, lon)
-                Toast.makeText(this, "Sighting recorded!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Acquiring GPS fix... try again", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun loadLastObservation() {
-        val lat = sharedPrefs.getFloat("last_lat", Float.NaN)
-        val lon = sharedPrefs.getFloat("last_lon", Float.NaN)
-
-        if (!lat.isNaN() && !lon.isNaN()) {
-            placeMarkerAndCenter(lat.toDouble(), lon.toDouble())
-        }
-    }
-
-    private fun centerOnSavedObservation() {
-        val lat = sharedPrefs.getFloat("last_lat", Float.NaN)
-        val lon = sharedPrefs.getFloat("last_lon", Float.NaN)
-
-        if (!lat.isNaN() && !lon.isNaN()) {
-            map.controller.animateTo(GeoPoint(lat.toDouble(), lon.toDouble()))
-        } else {
-            Toast.makeText(this, "No sightings recorded yet", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun placeMarkerAndCenter(lat: Double, lon: Double) {
-        val point = GeoPoint(lat, lon)
-        val marker = Marker(map)
-        marker.position = point
-        marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-        marker.title = "Saved Sighting"
-
-        // Clear old markers and add new one
-        map.overlays.clear()
-        map.overlays.add(marker)
-        map.invalidate()
-
-        map.controller.animateTo(point)
-    }
-
-    /* =========================================
-       LIFECYCLE MANAGEMENT
-       ========================================= */
-    override fun onResume() {
-        super.onResume()
-        map.onResume()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        map.onPause()
     }
 }

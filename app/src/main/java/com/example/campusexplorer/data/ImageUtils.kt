@@ -1,12 +1,13 @@
 package com.example.campusexplorer.data
 
+import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
-/** Converts a captured frame to a Bitmap rotated the way the user was holding the phone. */
+// Turns a camera image into a Bitmap, rotated to match how the phone was held.
 fun ImageProxy.toUprightBitmap(): Bitmap {
     val bitmap = toBitmap()
     val rotation = imageInfo.rotationDegrees
@@ -15,16 +16,17 @@ fun ImageProxy.toUprightBitmap(): Bitmap {
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
 
-/**
- * Shrinks and JPEG-compresses a photo so it fits in a single Firestore document (1 MiB limit).
- * If you move images to Firebase Storage later, you can raise these limits.
- */
-fun Bitmap.compressForUpload(maxDimension: Int = 1280, maxBytes: Int = 700_000): ByteArray {
+// Shrinks a photo and turns it into a JPEG so uploads and downloads are quick.
+@SuppressLint("UseKtx")
+fun Bitmap.compressForUpload(maxDimension: Int = 2048, maxBytes: Int = 2_000_000): ByteArray {
+
+    // Scale down so the longest side is at most maxDimension pixels.
     val scale = maxDimension.toFloat() / max(width, height)
     val scaled = if (scale < 1f) {
         Bitmap.createScaledBitmap(this, (width * scale).toInt(), (height * scale).toInt(), true)
     } else this
 
+    // Lower the JPEG quality until the file is small enough (but not below 40).
     var quality = 85
     while (true) {
         val bytes = ByteArrayOutputStream().use {

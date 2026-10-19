@@ -23,10 +23,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import com.example.campusexplorer.ui.NatureQuestScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
 import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import kotlinx.coroutines.launch
+
+// Switches between the Nature Quest design (true) and the plain tab bar layout (false).
+private const val USE_NATURE_QUEST_UI = true
 
 // The tabs in the bottom bar, each with a label and an icon from res/drawable.
 private enum class Tab(val label: String, @param:DrawableRes val icon: Int) {
@@ -84,26 +88,28 @@ fun CampusExplorerApp() {
         // Where pop-up messages appear.
         snackbarHost = { SnackbarHost(snackbar) },
 
-        // The bottom tab bar.
+        // The plain tab bar. The Nature Quest design draws its own instead.
         bottomBar = {
 
-            NavigationBar {
+            if (!USE_NATURE_QUEST_UI) {
+                NavigationBar {
 
-                // One button per tab.
-                Tab.entries.forEach {
+                    // One button per tab.
+                    Tab.entries.forEach {
 
-                    NavigationBarItem(
+                        NavigationBarItem(
 
-                        // Highlight the selected tab.
-                        selected = tab == it,
+                            // Highlight the selected tab.
+                            selected = tab == it,
 
-                        // Switch to this tab when tapped.
-                        onClick = { tab = it },
+                            // Switch to this tab when tapped.
+                            onClick = { tab = it },
 
-                        // Tab icon and label.
-                        icon = { Icon(painterResource(it.icon), contentDescription = null) },
-                        label = { Text(it.label) },
-                    )
+                            // Tab icon and label.
+                            icon = { Icon(painterResource(it.icon), contentDescription = null) },
+                            label = { Text(it.label) },
+                        )
+                    }
                 }
             }
         },
@@ -112,12 +118,22 @@ fun CampusExplorerApp() {
     // innerPadding is the space the bars take up, so content isn't hidden behind them.
     { innerPadding ->
 
-        val contentModifier = Modifier.padding(innerPadding)
+        // Nature Quest design: its own header, frame, and tabs (see ui/MapCameraUI.kt).
+        if (USE_NATURE_QUEST_UI) {
 
-        // Show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
-        when (tab) {
-            Tab.Map -> MapScreen(onMessage = showMessage, modifier = contentModifier)
-            Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
+            NatureQuestScreen(
+                mapContent = { MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
+                cameraContent = { CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
+            )
+
+        // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
+        } else {
+
+            val contentModifier = Modifier.padding(innerPadding)
+            when (tab) {
+                Tab.Map -> MapScreen(onMessage = showMessage, modifier = contentModifier)
+                Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
+            }
         }
     }
 }

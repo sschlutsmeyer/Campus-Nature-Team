@@ -1,9 +1,7 @@
 package com.example.campusexplorer.ui.map
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,16 +16,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
 import java.text.DateFormat
 
-// The Map tab: a map area on top and the list of photos below.
+// The Map tab: a map of photo pins on top and the list of photos below.
 @Composable
 fun MapScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 
@@ -43,24 +39,13 @@ fun MapScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 
     Column(modifier.fillMaxSize()) {
 
-        // TODO: Replace this placeholder with an OpenStreetMap view (e.g. osmdroid or MapLibre)
-        //  and draw one marker per item in `pins`.
-        //  Tapping a marker should set `selectedPhoto` to show the photo, like the list rows below.
-        // Placeholder for the map. Takes the top half of the screen.
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        ) {
-            Text(
-                "Map coming soon\n(OpenStreetMap)",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // The map, in the top half (see PhotoMap.kt). Tapping a pin opens that photo.
+        PhotoMap(
+            pins = pins,
+            onPinClick = { selectedPhoto = it },
+            onMessage = onMessage,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        )
 
         // Bottom half: a heading and the photo list.
         Column(

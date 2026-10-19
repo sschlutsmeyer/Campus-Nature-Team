@@ -5,6 +5,8 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Used to download OpenStreetMap map tiles. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Used to tag each photo with where it was taken, for the map. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

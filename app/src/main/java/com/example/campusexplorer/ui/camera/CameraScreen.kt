@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -46,10 +48,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.LocationHelper
 import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.compressForUpload
@@ -233,6 +237,9 @@ private fun PhotoReview(
     // The caption being typed.
     var caption by remember { mutableStateOf("") }
 
+    // Whether to also keep a copy of the photo on this phone.
+    var keepLocalCopy by remember { mutableStateOf(true) }
+
     // True while saving. Disables the buttons and shows a spinner.
     var saving by remember { mutableStateOf(false) }
 
@@ -259,6 +266,22 @@ private fun PhotoReview(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // Ask whether to keep a copy on the phone. Tapping the text toggles it too.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.toggleable(
+                value = keepLocalCopy,
+                enabled = !saving,
+                role = Role.Checkbox,
+                onValueChange = { keepLocalCopy = it },
+            ),
+        ) {
+
+            // onCheckedChange is null because the whole row handles taps.
+            Checkbox(checked = keepLocalCopy, onCheckedChange = null, enabled = !saving)
+            Text("Also save a copy on this phone", modifier = Modifier.padding(start = 8.dp))
+        }
+
         // Buttons side by side.
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
 
@@ -278,7 +301,18 @@ private fun PhotoReview(
                             val location = LocationHelper.currentLocation(context)
 
                             // Upload the photo with its caption and location.
-                            PhotoRepository.save(jpeg, caption.trim(), location)
+                            val photoId = PhotoRepository.save(jpeg, caption.trim(), location)
+
+                            // Keep a copy on the phone if asked. The upload already worked, so a
+                            // failure here only gets a warning.
+                            if (keepLocalCopy) {
+                                try {
+                                    LocalPhotoStore.save(context, photoId, jpeg)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Couldn't save local copy", e)
+                                    onMessage("Uploaded, but couldn't save a copy on this phone")
+                                }
+                            }
 
                             // Warn that a photo without a location won't get a map pin.
                             if (location == null) onMessage("Saved without location (permission off or GPS unavailable)")

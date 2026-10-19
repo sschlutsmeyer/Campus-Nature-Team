@@ -144,21 +144,28 @@ object PhotoRepository {
         }
     }
 
-    // Deletes a photo's image and info. An already-missing image is fine.
+    // Deletes a photo's info and image. An already-missing image is fine.
     suspend fun delete(photo: NaturePhoto) {
         ensureSignedIn()
 
-        // Delete the image first. If that fails, the photo stays listed so it can be retried.
-        val path = photo.storagePath
-        if (path != null) {
-            try {
-                storage.child(path).delete().await()
-            } catch (e: StorageException) {
-                if (e.errorCode != StorageException.ERROR_OBJECT_NOT_FOUND) throw e
-            }
-        } else {
-            legacyImages.document(photo.id).delete().await()
-        }
+        // Delete the info first so the pin disappears. If the image delete then fails, we're left
+        // with an unused file in Storage instead of a pin with no photo.
         photos.document(photo.id).delete().await()
+
+        // Older photos keep their image in Firestore instead of Storage.
+        val path = photo.storagePath
+        if (path == null) {
+            legacyImages.document(photo.id).delete().await()
+            return
+        }
+
+        // The photo is already gone from the app, so a failure here is only logged.
+        try {
+            storage.child(path).delete().await()
+        } catch (e: StorageException) {
+            if (e.errorCode != StorageException.ERROR_OBJECT_NOT_FOUND) {
+                Log.w(TAG, "Deleted photo ${photo.id} but not its image at $path", e)
+            }
+        }
     }
 }

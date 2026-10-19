@@ -26,8 +26,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
 import kotlinx.coroutines.CancellationException
@@ -42,7 +44,7 @@ private const val TAG = "PhotoDetailsDialog"
 @Composable
 fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (String) -> Unit) {
 
-    // The downloaded image, whether it's loading, and any error message.
+    // The image, whether it's loading, and any error message.
     var bitmap by remember(photo.id) { mutableStateOf<Bitmap?>(null) }
     var loading by remember(photo.id) { mutableStateOf(true) }
     var error by remember(photo.id) { mutableStateOf<String?>(null) }
@@ -56,15 +58,18 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
 
     // Used to delete in the background.
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    // Download the image. Runs again when a different photo is opened or Retry is tapped.
+    // Load the image. Runs again when a different photo is opened or Retry is tapped.
     LaunchedEffect(photo.id, retryCount) {
         loading = true
         error = null
         bitmap = null
 
         try {
-            val bytes = PhotoRepository.loadImage(photo)
+
+            // Use the copy on this phone if there is one, otherwise download it.
+            val bytes = LocalPhotoStore.load(context, photo.id) ?: PhotoRepository.loadImage(photo)
 
             // Turn the JPEG bytes into a picture, off the main thread.
             bitmap = if (bytes == null) {
@@ -166,6 +171,9 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                         scope.launch {
                             try {
                                 PhotoRepository.delete(photo)
+
+                                // Remove the copy on this phone too.
+                                LocalPhotoStore.delete(context, photo.id)
                                 onMessage("Photo deleted")
 
                                 // The list updates on its own once Firestore removes the photo.

@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.Blob
 import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.channels.awaitClose
@@ -73,12 +74,15 @@ object PhotoRepository {
         }
         val registration = photos
             .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener { snapshot, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Photo listener failed", error)
                     return@addSnapshotListener
                 }
-                trySend(snapshot?.documents.orEmpty().map { doc ->
+                // Only create photo pins after Firebase confirms the save.
+                trySend(snapshot?.documents.orEmpty().filterNot {
+                    it.metadata.hasPendingWrites()
+                }.map { doc ->
                     NaturePhoto(
                         id = doc.id,
                         caption = doc.getString("caption").orEmpty(),

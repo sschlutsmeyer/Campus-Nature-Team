@@ -104,6 +104,9 @@ private val CameraTabIcon: ImageVector = ImageVector.Builder(
 
 @Composable
 fun NatureQuestScreen(
+    selectedTab: String,
+    onTabSelected: (String) -> Unit,
+    snackbarHost: @Composable () -> Unit = {},
     mapContent: @Composable () -> Unit = {
         ViewPlaceholder(
             title = "Campus Map",
@@ -121,11 +124,9 @@ fun NatureQuestScreen(
         )
     }
 ) {
-    var selectedTab by rememberSaveable {
-        mutableStateOf("Map")
-    }
 
     Scaffold(
+        snackbarHost = snackbarHost,
         containerColor = Cream,
         bottomBar = {
             Surface(
@@ -146,7 +147,7 @@ fun NatureQuestScreen(
                         title = "Map",
                         icon = MapTabIcon,
                         selected = selectedTab == "Map",
-                        onClick = { selectedTab = "Map" },
+                        onClick = { onTabSelected("Map") },
                         modifier = Modifier.weight(1f)
                     )
 
@@ -154,7 +155,7 @@ fun NatureQuestScreen(
                         title = "Camera",
                         icon = CameraTabIcon,
                         selected = selectedTab == "Camera",
-                        onClick = { selectedTab = "Camera" },
+                        onClick = { onTabSelected("Camera") },
                         modifier = Modifier.weight(1f)
                     )
                 }

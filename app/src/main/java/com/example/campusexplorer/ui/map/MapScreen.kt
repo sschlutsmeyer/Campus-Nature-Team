@@ -23,12 +23,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
 import java.text.DateFormat
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 @Composable
 fun MapScreen(modifier: Modifier = Modifier) {
     val photosFlow = remember { PhotoRepository.observePhotos() }
     val photos by photosFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val pins = photos.filter { it.latitude != null && it.longitude != null }
+    var selectedPhoto by remember { mutableStateOf<NaturePhoto?>(null) }
+
+    selectedPhoto?.let { photo ->
+        PhotoDetailsDialog(
+            photo = photo,
+            onDismiss = { selectedPhoto = null },
+        )
+    }
 
     Column(modifier.fillMaxSize()) {
         // TODO: Replace this placeholder with an OpenStreetMap view (e.g. osmdroid or MapLibre)
@@ -58,21 +69,40 @@ fun MapScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             LazyColumn {
-                items(photos, key = { it.id }) { PhotoPinRow(it) }
+                items(photos, key = { it.id }) { photo ->
+                    PhotoPinRow(
+                        photo = photo,
+                        onClick = { selectedPhoto = photo },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PhotoPinRow(photo: NaturePhoto) {
+private fun PhotoPinRow(photo: NaturePhoto, onClick: () -> Unit) {
     ListItem(
-        headlineContent = { Text(photo.caption.ifBlank { "(no caption)" }) },
+        modifier = Modifier.clickable(
+            onClickLabel = "View photo",
+            onClick = onClick,
+        ),
+        headlineContent = {
+            Text(photo.caption.ifBlank { "(no caption)" })
+        },
         supportingContent = {
-            val where = if (photo.latitude != null && photo.longitude != null) {
+            val where = if (
+                photo.latitude != null && photo.longitude != null
+            ) {
                 "%.5f, %.5f".format(photo.latitude, photo.longitude)
-            } else "no location"
-            val whenTaken = photo.createdAt?.let { DateFormat.getDateTimeInstance().format(it) } ?: "just now"
+            } else {
+                "no location"
+            }
+
+            val whenTaken = photo.createdAt?.let {
+                DateFormat.getDateTimeInstance().format(it)
+            } ?: "just now"
+
             Text("$where · $whenTaken")
         },
     )

@@ -27,6 +27,9 @@ import java.text.DateFormat
 @Composable
 fun MapScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 
+    // Make the map work
+    org.osmdroid.config.Configuration.getInstance().userAgentValue = "CampusNatureQuest_1.0"
+
     // Live list of photos. Updates on its own when photos are added or deleted.
     val photosFlow = remember { PhotoRepository.observePhotos() }
     val photos by photosFlow.collectAsStateWithLifecycle(initialValue = emptyList())

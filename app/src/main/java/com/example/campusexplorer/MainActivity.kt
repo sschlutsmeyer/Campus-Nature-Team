@@ -23,20 +23,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import com.example.campusexplorer.ui.NatureQuestScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
 import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import kotlinx.coroutines.launch
 
-private enum class Tab(val label: String, @param:DrawableRes val icon: Int) {
+private enum class Tab(
+    val label: String,
+    @param:DrawableRes val icon: Int
+) {
     Map("Map", R.drawable.ic_map),
     Camera("Camera", R.drawable.ic_camera),
 }
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         enableEdgeToEdge()
+
         setContent {
             CampusExplorerTheme {
                 CampusExplorerApp()
@@ -47,31 +54,92 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun CampusExplorerApp() {
-    var tab by rememberSaveable { mutableStateOf(Tab.Map) }
-    val snackbar = remember { SnackbarHostState() }
+    // true = Nature Quest design
+    // false = original navigation layout
+    val useNatureQuestUI = true
+
+    var tab by rememberSaveable {
+        mutableStateOf(Tab.Map)
+    }
+
+    val snackbar = remember {
+        SnackbarHostState()
+    }
+
     val scope = rememberCoroutineScope()
-    val showMessage: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
+
+    val showMessage: (String) -> Unit = { message ->
+        scope.launch {
+            snackbar.showSnackbar(message)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        snackbarHost = { SnackbarHost(snackbar) },
+
+        snackbarHost = {
+            SnackbarHost(snackbar)
+        },
+
         bottomBar = {
-            NavigationBar {
-                Tab.entries.forEach {
-                    NavigationBarItem(
-                        selected = tab == it,
-                        onClick = { tab = it },
-                        icon = { Icon(painterResource(it.icon), contentDescription = null) },
-                        label = { Text(it.label) },
+            if (!useNatureQuestUI) {
+                NavigationBar {
+                    Tab.entries.forEach { currentTab ->
+                        NavigationBarItem(
+                            selected = tab == currentTab,
+
+                            onClick = {
+                                tab = currentTab
+                            },
+
+                            icon = {
+                                Icon(
+                                    painter = painterResource(
+                                        currentTab.icon
+                                    ),
+                                    contentDescription = null
+                                )
+                            },
+
+                            label = {
+                                Text(currentTab.label)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        if (useNatureQuestUI) {
+            NatureQuestScreen(
+                mapContent = {
+                    MapScreen(
+                        modifier = Modifier.fillMaxSize()
+                    )
+                },
+
+                cameraContent = {
+                    CameraScreen(
+                        onMessage = showMessage,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            )
+        } else {
+            val contentModifier = Modifier.padding(innerPadding)
+
+            when (tab) {
+                Tab.Map -> {
+                    MapScreen(contentModifier)
+                }
+
+                Tab.Camera -> {
+                    CameraScreen(
+                        onMessage = showMessage,
+                        modifier = contentModifier
                     )
                 }
             }
-        },
-    ) { innerPadding ->
-        val contentModifier = Modifier.padding(innerPadding)
-        when (tab) {
-            Tab.Map -> MapScreen(contentModifier)
-            Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
         }
     }
 }

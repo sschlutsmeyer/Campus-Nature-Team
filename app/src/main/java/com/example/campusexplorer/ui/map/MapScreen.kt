@@ -42,7 +42,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier.fillMaxSize()) {
-        // TODO: Replace this placeholder with an OpenStreetMap view (e.g. osmdroid or MapLibre)
+        org.osmdroid.config.Configuration.getInstance().userAgentValue = "CampusNatureQuest_1.0"
         //  and draw one marker per item in `pins`.
         Box(
             contentAlignment = Alignment.Center,

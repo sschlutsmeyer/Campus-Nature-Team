@@ -15,59 +15,71 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 import java.util.Date
 
-/** Metadata for one photo. The image bytes live separately (see [PhotoRepository.loadImage]). */
+// Info about one photo. The image itself is downloaded separately with loadImage().
 data class NaturePhoto(
     val id: String,
     val caption: String,
     val latitude: Double?,
     val longitude: Double?,
     val createdAt: Date?,
+
+    // Who took it.
     val uid: String?,
-    /** Path of the JPEG in Firebase Storage, or null for older photos stored in Firestore. */
+
+    // Where the JPEG is in Firebase Storage. Null for older photos stored in Firestore.
     val storagePath: String?,
 )
 
-/**
- * All photo reads/writes go through here.
- *
- * Layout:
- *  - photos/{id}                    caption, latitude, longitude, createdAt, uid, storagePath
- *  - Storage: photos/{uid}/{id}.jpg the JPEG itself
- *  - photoImages/{id}               legacy: JPEG bytes in Firestore, only read for photos saved
- *                                   before the move to Firebase Storage
- */
+// Every photo read and write goes through here.
+//
+// Where things are stored:
+//  - Firestore photos/{id}:           caption, latitude, longitude, createdAt, uid, storagePath
+//  - Storage photos/{uid}/{id}.jpg:   the image
+//  - Firestore photoImages/{id}:      image bytes for older photos saved before we used Storage
 object PhotoRepository {
+
+    // Label for this file's messages in Logcat.
     private const val TAG = "PhotoRepository"
+
+    // Largest image we'll download (10 MB).
     private const val MAX_DOWNLOAD_BYTES = 10L * 1024 * 1024
+
+    // Shortcuts to the Firebase databases and folders we use.
     private val db get() = FirebaseFirestore.getInstance()
     private val storage get() = FirebaseStorage.getInstance().reference
     private val photos get() = db.collection("photos")
     private val legacyImages get() = db.collection("photoImages")
 
-    /** Signs in anonymously if needed so security rules can require a signed-in user. */
+    // Signs in anonymously if needed and returns the user's id. Firebase rules require sign-in.
     suspend fun ensureSignedIn(): String {
         val auth = FirebaseAuth.getInstance()
         auth.currentUser?.let { return it.uid }
         return checkNotNull(auth.signInAnonymously().await().user).uid
     }
 
-    /** Uploads a photo to Firebase Storage, saves its metadata, and returns its id. */
+    // Uploads the image, saves its info, and returns the new photo's id.
     suspend fun save(jpeg: ByteArray, caption: String, location: Location?): String {
         val uid = ensureSignedIn()
+
+        // Make a new photo id and decide where its image goes.
         val photoRef = photos.document()
         val storagePath = "photos/$uid/${photoRef.id}.jpg"
-        // Upload the image first so a photo never shows up in the list without its image.
+
+        // Upload the image first so a photo never shows up without one.
         try {
             storage.child(storagePath)
                 .putBytes(jpeg, storageMetadata { contentType = "image/jpeg" })
                 .await()
         } catch (e: StorageException) {
-            // On upload, "object not found" means the bucket itself is missing.
+
+            // "Not found" on upload means Storage isn't set up for this Firebase project.
             if (e.errorCode != StorageException.ERROR_OBJECT_NOT_FOUND) throw e
             throw IllegalStateException(
                 "Storage bucket not found. Is Storage enabled in the Firebase console?", e
             )
         }
+
+        // Save the photo's info. The server fills in the time.
         photoRef.set(
             mapOf(
                 "caption" to caption,
@@ -81,13 +93,15 @@ object PhotoRepository {
         return photoRef.id
     }
 
-    /** Live list of photo metadata, newest first. Use this for map pins. */
+    // Live list of all photos, newest first. Sends a new list whenever anything changes.
     fun observePhotos(): Flow<List<NaturePhoto>> = callbackFlow {
         try {
             ensureSignedIn()
         } catch (e: Exception) {
             Log.w(TAG, "Sign-in failed; reads may be denied by security rules", e)
         }
+
+        // Listen for changes to the photos collection.
         val registration = photos
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
@@ -95,6 +109,8 @@ object PhotoRepository {
                     Log.w(TAG, "Photo listener failed", error)
                     return@addSnapshotListener
                 }
+
+                // Turn each Firestore document into a NaturePhoto.
                 trySend(snapshot?.documents.orEmpty().map { doc ->
                     NaturePhoto(
                         id = doc.id,
@@ -107,12 +123,16 @@ object PhotoRepository {
                     )
                 })
             }
+
+        // Stop listening when nobody needs the list anymore.
         awaitClose { registration.remove() }
     }
 
-    /** Downloads the JPEG bytes for one photo, or null if missing. */
+    // Downloads a photo's JPEG bytes, or returns null if the image is missing.
     suspend fun loadImage(photo: NaturePhoto): ByteArray? {
         ensureSignedIn()
+
+        // Older photos keep their image in Firestore instead of Storage.
         val path = photo.storagePath
             ?: return legacyImages.document(photo.id).get().await().getBlob("data")?.toBytes()
         return try {
@@ -124,11 +144,11 @@ object PhotoRepository {
         }
     }
 
-    /** Deletes a photo's image and metadata. A missing image is ignored. */
+    // Deletes a photo's image and info. An already-missing image is fine.
     suspend fun delete(photo: NaturePhoto) {
         ensureSignedIn()
-        // Delete the image first so a failure leaves the photo listed (and retryable) instead of
-        // leaving an orphaned file in Storage.
+
+        // Delete the image first. If that fails, the photo stays listed so it can be retried.
         val path = photo.storagePath
         if (path != null) {
             try {

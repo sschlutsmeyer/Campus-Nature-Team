@@ -28,111 +28,96 @@ import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import kotlinx.coroutines.launch
 
-// List of tabs in the bottom bar.
-// Each tab has a text label and an icon (the Int is the ID of an image in res/drawable).
+// The tabs in the bottom bar, each with a label and an icon from res/drawable.
 private enum class Tab(val label: String, @param:DrawableRes val icon: Int) {
     Map("Map", R.drawable.ic_map),
     Camera("Camera", R.drawable.ic_camera),
 }
 
-// Main
+// The app's only screen. Everything is drawn by CampusExplorerApp below.
 class MainActivity : ComponentActivity() {
 
-    // onCreate runs once when the screen is being created. "override" means we are
-    // replacing the parent class's version with our own.
+    // Runs once when the app opens.
     override fun onCreate(savedInstanceState: Bundle?) {
 
-        // Always call the parent's onCreate first so Android can do its own setup.
+        // Let Android do its own setup first.
         super.onCreate(savedInstanceState)
 
-        // Let our UI draw all the way to the edges of the phone screen.
+        // Draw behind the status and navigation bars.
         enableEdgeToEdge()
 
-        // Set what the screen should look like
+        // Set the UI, wrapped in our theme.
         setContent {
 
-            // Wrap everything in our app's theme so colors and fonts are consistent.
+            // Apply our colors and fonts.
             CampusExplorerTheme {
 
-                // Function that draws the app. defined below.
+                // Draw the app.
                 CampusExplorerApp()
             }
         }
     }
 }
 
-// @Composable means this function draws UI.
+// The whole app: a bottom tab bar and the selected tab's screen.
 @Composable
 fun CampusExplorerApp() {
-    // Stores which tab is currently selected. Starts on the Map tab.
-    // "by rememberSaveable" keeps the choice even if the phone is rotated.
+
+    // The selected tab. rememberSaveable keeps it when the phone rotates.
     var tab by rememberSaveable { mutableStateOf(Tab.Map) }
 
-    // The controller for pop-ups.
-    // "remember" keeps the same one around instead of making a new one on every redraw.
+    // Controls the pop-up messages (snackbars) at the bottom of the screen.
     val snackbar = remember { SnackbarHostState() }
 
-    // Sets a scope for doing background tasks such as loading popups.
+    // Used to show snackbars, which run in the background.
     val scope = rememberCoroutineScope()
 
-    // Function that shows a message in a snackbar (pop-up) using the scope we set.
+    // Shows a pop-up message. Passed to each screen.
     val showMessage: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
-    // Scaffold is a standard page layout with slots we can fill in.
+    // Standard page layout with slots for a bottom bar and snackbars.
     Scaffold(
 
-        // Make it fill the whole screen.
+        // Fill the whole screen.
         modifier = Modifier.fillMaxSize(),
 
-        // Set the pop-up host to be in the place where pop-ups go (the snackbar).
+        // Where pop-up messages appear.
         snackbarHost = { SnackbarHost(snackbar) },
 
-        // Fill in the bottom bar of the scaffold.
+        // The bottom tab bar.
         bottomBar = {
 
-            // The bottom bar that holds our tabs.
             NavigationBar {
 
-                // Loop over every tab in our Tab enum. "it" is the current tab.
+                // One button per tab.
                 Tab.entries.forEach {
 
-                    // Draw one tab button.
                     NavigationBarItem(
 
-                        // "selected" Highlight this tab if this tab is the one currently selected.
+                        // Highlight the selected tab.
                         selected = tab == it,
 
-                        // "onClick" On click make this tab the selected one.
+                        // Switch to this tab when tapped.
                         onClick = { tab = it },
 
-                        // "icon" Show the tab's icon.
+                        // Tab icon and label.
                         icon = { Icon(painterResource(it.icon), contentDescription = null) },
-
-                        // "label" Show the tab's text label.
                         label = { Text(it.label) },
                     )
                 }
             }
         },
-    ) // end of scaffold
+    )
 
-    // Scaffold gives us "innerPadding" variable for how much space the bars take up
-    // which we use so our content doesn't get hidden behind them.
+    // innerPadding is the space the bars take up, so content isn't hidden behind them.
     { innerPadding ->
 
-        // A Modifier that adds that padding, which we hand to whichever screen we show.
         val contentModifier = Modifier.padding(innerPadding)
 
-        // "when" like a switch statement. pick what to show based on the selected tab.
+        // Show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
         when (tab) {
-
-            // When the Map tab is selected, show the map screen and let it show messages.
             Tab.Map -> MapScreen(onMessage = showMessage, modifier = contentModifier)
-
-            // When the Camera tab is selected, show the camera screen and let it show messages.
             Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
-
-            // See MapScreen.kt and CameraScreen.kt for the above functions
         }
     }
 }

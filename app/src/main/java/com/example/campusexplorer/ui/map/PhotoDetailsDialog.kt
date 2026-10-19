@@ -35,19 +35,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+// Label for this file's messages in Logcat.
 private const val TAG = "PhotoDetailsDialog"
 
-// Displays the image belonging to the selected photo, with buttons to retry, delete, or close.
+// Pop-up that shows one photo, with Delete, Retry, and Close buttons.
 @Composable
 fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (String) -> Unit) {
+
+    // The downloaded image, whether it's loading, and any error message.
     var bitmap by remember(photo.id) { mutableStateOf<Bitmap?>(null) }
     var loading by remember(photo.id) { mutableStateOf(true) }
     var error by remember(photo.id) { mutableStateOf<String?>(null) }
+
+    // Increase this to download the image again.
     var retryCount by remember(photo.id) { mutableStateOf(0) }
+
+    // Whether the "Delete photo?" pop-up is showing, and whether a delete is running.
     var confirmingDelete by remember(photo.id) { mutableStateOf(false) }
     var deleting by remember(photo.id) { mutableStateOf(false) }
+
+    // Used to delete in the background.
     val scope = rememberCoroutineScope()
 
+    // Download the image. Runs again when a different photo is opened or Retry is tapped.
     LaunchedEffect(photo.id, retryCount) {
         loading = true
         error = null
@@ -56,6 +66,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         try {
             val bytes = PhotoRepository.loadImage(photo)
 
+            // Turn the JPEG bytes into a picture, off the main thread.
             bitmap = if (bytes == null) {
                 null
             } else {
@@ -67,6 +78,8 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
             if (bitmap == null) {
                 error = "No image was found for this photo."
             }
+
+        // The pop-up was closed mid-download. Let it stop normally.
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -82,6 +95,8 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         title = {
             Text(photo.caption.ifBlank { "Nature photo" })
         },
+
+        // Show a spinner, the error, or the photo.
         text = {
             Box(
                 modifier = Modifier.fillMaxWidth().height(280.dp),
@@ -115,7 +130,8 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         },
         dismissButton = {
             Row {
-                // Red so it stands out as destructive; asks for confirmation before deleting.
+
+                // Red Delete button. Asks before deleting.
                 TextButton(
                     onClick = { confirmingDelete = true },
                     enabled = !deleting,
@@ -125,6 +141,8 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                 ) {
                     Text(if (deleting) "Deleting…" else "Delete")
                 }
+
+                // Retry only shows after a failed download.
                 if (error != null && !loading) {
                     TextButton(onClick = { retryCount++ }) {
                         Text("Retry")
@@ -134,6 +152,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         },
     )
 
+    // "Are you sure?" pop-up for deleting.
     if (confirmingDelete) {
         AlertDialog(
             onDismissRequest = { confirmingDelete = false },
@@ -148,6 +167,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                             try {
                                 PhotoRepository.delete(photo)
                                 onMessage("Photo deleted")
+
                                 // The list updates on its own once Firestore removes the photo.
                                 onDismiss()
                             } catch (e: CancellationException) {
@@ -155,6 +175,8 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                             } catch (e: Exception) {
                                 Log.e(TAG, "Could not delete photo ${photo.id}", e)
                                 onMessage("Delete failed: ${e.message}")
+
+                                // Let the user try again.
                                 deleting = false
                             }
                         }

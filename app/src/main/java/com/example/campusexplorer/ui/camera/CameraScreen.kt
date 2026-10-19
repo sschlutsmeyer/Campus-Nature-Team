@@ -175,14 +175,14 @@ private fun CameraCapture(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Shutter button: a white ring around a white circle, near the bottom.
+        // Shutter button.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp)
                 .size(76.dp)
 
-                // The outer ring.
+                // Outer ring.
                 .border(4.dp, Color.White, CircleShape)
 
                 // Gap between the ring and the center.

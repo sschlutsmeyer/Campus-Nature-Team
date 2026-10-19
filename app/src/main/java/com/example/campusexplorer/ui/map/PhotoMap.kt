@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -25,7 +26,8 @@ import com.example.campusexplorer.data.LocationHelper
 import com.example.campusexplorer.data.NaturePhoto
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.TileSourcePolicy
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -89,7 +91,8 @@ fun PhotoMap(
     }
 
     // Box stacks its children: map at the back, button on top.
-    Box(modifier) {
+    // clipToBounds stops map tiles from drawing outside the map's area.
+    Box(modifier.clipToBounds()) {
 
         AndroidView(
             factory = { mapView },
@@ -142,15 +145,41 @@ fun PhotoMap(
     }
 }
 
+// Names our app to OpenStreetMap's servers. They block requests that don't identify the app.
+private const val USER_AGENT = "CampusNatureQuest_BZ_1.0"
+
+// OpenStreetMap's standard map tiles. Same as osmdroid's built-in MAPNIK source, except that
+// MAPNIK replaces our user agent with "<applicationId>/<version>". Ours is still the template
+// "com.example.myapplication", which OSM blocks. Changing applicationId would also mean
+// re-registering the app in Firebase, so we send USER_AGENT instead.
+// The new name also gives it a fresh tile cache, so blocked tiles saved earlier aren't reused.
+private val OSM_TILES = XYTileSource(
+    "OpenStreetMap",
+    0,
+    19,
+    256,
+    ".png",
+    arrayOf("https://tile.openstreetmap.org/"),
+    "© OpenStreetMap contributors",
+
+    // At most 2 downloads at once, no bulk downloading, and send our user agent unchanged.
+    TileSourcePolicy(
+        2,
+        TileSourcePolicy.FLAG_NO_BULK or
+            TileSourcePolicy.FLAG_NO_PREVENTIVE or
+            TileSourcePolicy.FLAG_USER_AGENT_MEANINGFUL,
+    ),
+)
+
 // Sets up an OpenStreetMap view centered on campus.
 private fun createMapView(context: Context): MapView {
 
     // osmdroid needs settings loaded and a user agent before tiles can download.
     Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
-    Configuration.getInstance().userAgentValue = "CampusNatureQuest_BZ_1.0"
+    Configuration.getInstance().userAgentValue = USER_AGENT
 
     return MapView(context).apply {
-        setTileSource(TileSourceFactory.MAPNIK)
+        setTileSource(OSM_TILES)
 
         // Pinch to zoom.
         setMultiTouchControls(true)

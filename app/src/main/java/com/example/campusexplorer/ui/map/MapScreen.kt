@@ -69,7 +69,9 @@ fun MapScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 
     // Show the tapped photo in a pop-up (see PhotoDetailsDialog.kt).
     selectedPhoto?.let { photo ->
-        PhotoDetailsDialog(photo = photo, onDismiss = { selectedPhoto = null }, onMessage = onMessage)
+        // Use the latest document so an open dialog also receives renamed captions.
+        val currentPhoto = photos.firstOrNull { it.id == photo.id } ?: photo
+        PhotoDetailsDialog(photo = currentPhoto, onDismiss = { selectedPhoto = null }, onMessage = onMessage)
     }
 }
 

@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageException
@@ -101,17 +102,23 @@ object PhotoRepository {
             Log.w(TAG, "Sign-in failed; reads may be denied by security rules", e)
         }
 
-        // Listen for changes to the photos collection.
+        // Keep an existing pin visible with its last confirmed name during an edit.
+        // A new photo still waits for its first confirmed save before appearing.
+        var confirmedPhotos = emptyMap<String, NaturePhoto>()
+
+        // Include acknowledgements even when only pending-write metadata changes.
         val registration = photos
             .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener { snapshot, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Photo listener failed", error)
                     return@addSnapshotListener
                 }
 
-                // Turn each Firestore document into a NaturePhoto.
-                trySend(snapshot?.documents.orEmpty().map { doc ->
+                val updatedPhotos = snapshot?.documents.orEmpty().mapNotNull { doc ->
+                    if (doc.metadata.hasPendingWrites()) {
+                        return@mapNotNull confirmedPhotos[doc.id]
+                    }
                     NaturePhoto(
                         id = doc.id,
                         caption = doc.getString("caption").orEmpty(),
@@ -121,11 +128,22 @@ object PhotoRepository {
                         uid = doc.getString("uid"),
                         storagePath = doc.getString("storagePath"),
                     )
-                })
+                }
+                confirmedPhotos = updatedPhotos.associateBy { it.id }
+                trySend(updatedPhotos)
             }
 
         // Stop listening when nobody needs the list anymore.
         awaitClose { registration.remove() }
+    }
+
+    // Rename the existing pin without changing its image, location, owner, or time.
+    suspend fun updateCaption(photo: NaturePhoto, caption: String) {
+        val name = caption.trim()
+        require(name.isNotEmpty()) { "Enter a pin name." }
+        val uid = ensureSignedIn()
+        check(photo.uid == uid) { "You can only edit pins you created." }
+        photos.document(photo.id).update("caption", name).await()
     }
 
     // Downloads a photo's JPEG bytes, or returns null if the image is missing.

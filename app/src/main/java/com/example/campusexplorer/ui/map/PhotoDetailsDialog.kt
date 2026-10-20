@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,7 +43,7 @@ import kotlinx.coroutines.withContext
 // Label for this file's messages in Logcat.
 private const val TAG = "PhotoDetailsDialog"
 
-// Pop-up that shows one photo, with Delete, Retry, and Close buttons.
+// Pop-up that shows one photo, with Edit Name, Delete, Retry, and Close buttons.
 @Composable
 fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (String) -> Unit) {
 
@@ -56,7 +59,15 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
     var confirmingDelete by remember(photo.id) { mutableStateOf(false) }
     var deleting by remember(photo.id) { mutableStateOf(false) }
 
-    // Used to delete in the background.
+    // Names are captions in Firestore. Only the owner can rename a pin.
+    val canEdit = photo.uid != null && photo.uid == FirebaseAuth.getInstance().currentUser?.uid
+    var displayedCaption by remember(photo.id, photo.caption) { mutableStateOf(photo.caption) }
+    var editingName by remember(photo.id) { mutableStateOf(false) }
+    var nameDraft by remember(photo.id) { mutableStateOf("") }
+    var savingName by remember(photo.id) { mutableStateOf(false) }
+    var nameError by remember(photo.id) { mutableStateOf<String?>(null) }
+
+    // Used to save a name or delete in the background.
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -84,7 +95,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                 error = "No image was found for this photo."
             }
 
-        // The pop-up was closed mid-download. Let it stop normally.
+            // The pop-up was closed mid-download. Let it stop normally.
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -96,40 +107,52 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!savingName && !deleting) onDismiss() },
         title = {
-            Text(photo.caption.ifBlank { "Nature photo" })
+            Text(displayedCaption.ifBlank { "Nature photo" })
         },
 
         // Show a spinner, the error, or the photo.
         text = {
-            Box(
-                modifier = Modifier.fillMaxWidth().height(280.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                val image = bitmap
+            Column {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(280.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val image = bitmap
 
-                when {
-                    loading -> CircularProgressIndicator()
+                    when {
+                        loading -> CircularProgressIndicator()
 
-                    error != null -> Text(
-                        text = error.orEmpty(),
-                        textAlign = TextAlign.Center,
-                    )
+                        error != null -> Text(
+                            text = error.orEmpty(),
+                            textAlign = TextAlign.Center,
+                        )
 
-                    image != null -> Image(
-                        bitmap = image.asImageBitmap(),
-                        contentDescription = photo.caption.ifBlank {
-                            "Saved nature photo"
+                        image != null -> Image(
+                            bitmap = image.asImageBitmap(),
+                            contentDescription = displayedCaption.ifBlank {
+                                "Saved nature photo"
+                            },
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                if (canEdit) {
+                    TextButton(
+                        enabled = !deleting && !savingName,
+                        onClick = {
+                            nameDraft = displayedCaption
+                            nameError = null
+                            editingName = true
                         },
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    ) { Text("Edit Name") }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss, enabled = !savingName && !deleting) {
                 Text("Close")
             }
         },
@@ -139,7 +162,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                 // Red Delete button. Asks before deleting.
                 TextButton(
                     onClick = { confirmingDelete = true },
-                    enabled = !deleting,
+                    enabled = !deleting && !savingName,
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
@@ -156,6 +179,63 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
             }
         },
     )
+
+    if (editingName) {
+        AlertDialog(
+            onDismissRequest = { if (!savingName) editingName = false },
+            title = { Text("Edit pin name") },
+            text = {
+                OutlinedTextField(
+                    value = nameDraft,
+                    onValueChange = {
+                        nameDraft = it
+                        nameError = null
+                    },
+                    label = { Text("Pin name") },
+                    singleLine = true,
+                    enabled = !savingName,
+                    isError = nameError != null,
+                    supportingText = {
+                        Text(nameError ?: "Enter a name for this pin.")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !savingName && nameDraft.isNotBlank() &&
+                            nameDraft.trim() != displayedCaption,
+                    onClick = {
+                        val newName = nameDraft.trim()
+                        savingName = true
+                        nameError = null
+                        scope.launch {
+                            try {
+                                PhotoRepository.updateCaption(photo, newName)
+                                displayedCaption = newName
+                                editingName = false
+                                savingName = false
+                                onMessage("Pin name updated")
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Could not rename photo ${photo.id}", e)
+                                nameError = "Couldn't save the name. Check your connection and try again."
+                            } finally {
+                                savingName = false
+                            }
+                        }
+                    },
+                ) { Text(if (savingName) "Saving…" else "Save") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !savingName,
+                    onClick = { editingName = false },
+                ) { Text("Cancel") }
+            },
+        )
+    }
 
     // "Are you sure?" pop-up for deleting.
     if (confirmingDelete) {

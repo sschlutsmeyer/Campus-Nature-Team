@@ -23,6 +23,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import com.example.campusexplorer.ui.Feature
+import com.example.campusexplorer.ui.FeaturePlaceholder
 import com.example.campusexplorer.ui.NatureQuestScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
 import com.example.campusexplorer.ui.map.MapScreen
@@ -118,13 +120,19 @@ fun CampusExplorerApp() {
     // innerPadding is the space the bars take up, so content isn't hidden behind them.
     { innerPadding ->
 
-        // Nature Quest design: its own header, frame, and tabs (see ui/MapCameraUI.kt).
+        // Nature Quest design: a home screen of features plus back/forward/home navigation
+        // (see ui/HomeScreen.kt and ui/MapCameraUI.kt).
         if (USE_NATURE_QUEST_UI) {
 
-            NatureQuestScreen(
-                mapContent = { MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
-                cameraContent = { CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize()) },
-            )
+            NatureQuestScreen { feature ->
+
+                // The screen for each feature. Features without one yet show a placeholder.
+                when (feature) {
+                    Feature.Map -> MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                    Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                    else -> FeaturePlaceholder(feature)
+                }
+            }
 
         // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
         } else {

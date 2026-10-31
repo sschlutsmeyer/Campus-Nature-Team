@@ -42,7 +42,7 @@ internal val LeafGreen = Color(0xFF427A46)
 internal val Cream = Color(0xFFF7F8F2)
 internal val LightGreen = Color(0xFFE8F3EC)
 
-// Back arrow icon: no extra icon dependency needed.
+// Navigation icons require no additional icon dependencies.
 private val BackIcon: ImageVector = ImageVector.Builder(
     name = "Back",
     defaultWidth = 24.dp,
@@ -61,7 +61,6 @@ private val BackIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-// Forward arrow icon: no extra icon dependency needed.
 private val ForwardIcon: ImageVector = ImageVector.Builder(
     name = "Forward",
     defaultWidth = 24.dp,
@@ -80,7 +79,6 @@ private val ForwardIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-// Home icon: no extra icon dependency needed.
 private val HomeIcon: ImageVector = ImageVector.Builder(
     name = "Home",
     defaultWidth = 24.dp,
@@ -109,31 +107,38 @@ private val HomeIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-// Marks the home screen in the navigation history. Every other entry is a Feature name.
 private const val HOME = "Home"
 
 @Composable
 fun NatureQuestScreen(
-    featureContent: @Composable (Feature) -> Unit = { FeaturePlaceholder(it) }
+    featureContent: @Composable (Feature) -> Unit = {
+        FeaturePlaceholder(it)
+    }
 ) {
-    // Browser-style history: every screen visited, and which one is showing.
-    // Stored as names so rememberSaveable keeps it when the phone rotates.
-    var history by rememberSaveable { mutableStateOf(arrayListOf(HOME)) }
-    var position by rememberSaveable { mutableIntStateOf(0) }
+    // Replace the whole list when navigating so Compose observes changes.
+    var history by rememberSaveable {
+        mutableStateOf(listOf(HOME))
+    }
+
+    var position by rememberSaveable {
+        mutableIntStateOf(0)
+    }
 
     val current = history[position]
     val canGoBack = position > 0
     val canGoForward = position < history.lastIndex
 
-    // Opens a screen, dropping any "forward" history (like a web browser).
     fun open(screen: String) {
         if (screen == current) return
-        history = ArrayList(history.subList(0, position + 1)).apply { add(screen) }
+
+        // Remove forward history before opening a new screen.
+        history = history.take(position + 1) + screen
         position = history.lastIndex
     }
 
-    // The phone's system back button/gesture steps back through the history too.
-    BackHandler(enabled = canGoBack) { position-- }
+    BackHandler(enabled = canGoBack) {
+        position--
+    }
 
     Scaffold(
         containerColor = Cream,
@@ -154,23 +159,36 @@ fun NatureQuestScreen(
 
         if (current == HOME) {
             HomeScreen(
-                onFeatureSelected = { open(it.name) },
+                onFeatureSelected = { feature ->
+                    open(feature.name)
+                },
                 modifier = contentModifier
             )
         } else {
             val feature = Feature.valueOf(current)
 
+            val hideHeader =
+                feature == Feature.Map ||
+                        feature == Feature.Camera
+
             Column(
-                modifier = contentModifier.padding(horizontal = 16.dp),
+                modifier = contentModifier
+                    .padding(horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(modifier = Modifier.height(16.dp))
+                // Map and Camera use the header space for their content.
+                if (!hideHeader) {
+                    Spacer(
+                        modifier = Modifier.height(16.dp)
+                    )
 
-                QuestHeader()
+                    QuestHeader()
 
-                Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(
+                        modifier = Modifier.height(20.dp)
+                    )
+                }
 
-                // Expands to fill all remaining space.
                 NatureFrame(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -179,13 +197,15 @@ fun NatureQuestScreen(
                     featureContent(feature)
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(
+                    modifier = Modifier.height(16.dp)
+                )
             }
         }
     }
 }
 
-// Bottom bar from the wireframe: back/forward on the left, home in the middle.
+// Back and forward on the left, home in the center.
 @Composable
 private fun NavigationBar(
     canGoBack: Boolean,
@@ -211,19 +231,33 @@ private fun NavigationBar(
                 modifier = Modifier.align(Alignment.CenterStart),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                IconButton(onClick = onBack, enabled = canGoBack) {
+                IconButton(
+                    onClick = onBack,
+                    enabled = canGoBack
+                ) {
                     Icon(
                         imageVector = BackIcon,
                         contentDescription = "Back",
-                        tint = if (canGoBack) Turquoise else Turquoise.copy(alpha = 0.3f)
+                        tint = if (canGoBack) {
+                            Turquoise
+                        } else {
+                            Turquoise.copy(alpha = 0.3f)
+                        }
                     )
                 }
 
-                IconButton(onClick = onForward, enabled = canGoForward) {
+                IconButton(
+                    onClick = onForward,
+                    enabled = canGoForward
+                ) {
                     Icon(
                         imageVector = ForwardIcon,
                         contentDescription = "Forward",
-                        tint = if (canGoForward) Turquoise else Turquoise.copy(alpha = 0.3f)
+                        tint = if (canGoForward) {
+                            Turquoise
+                        } else {
+                            Turquoise.copy(alpha = 0.3f)
+                        }
                     )
                 }
             }
@@ -248,7 +282,7 @@ private fun NavigationBar(
     }
 }
 
-// Shown for features that don't have a screen yet.
+// Shown for features without an implemented screen.
 @Composable
 fun FeaturePlaceholder(feature: Feature) {
     ViewPlaceholder(
@@ -258,7 +292,6 @@ fun FeaturePlaceholder(feature: Feature) {
         foreground = Color(0xFF294C39)
     )
 }
-
 
 @Composable
 internal fun QuestHeader() {
@@ -298,7 +331,9 @@ internal fun QuestHeader() {
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -325,7 +360,9 @@ internal fun QuestHeader() {
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
 
             Text(
                 text = "CSU Channel Islands",
@@ -344,6 +381,7 @@ internal fun QuestHeader() {
     }
 }
 
+// Decorative frame around feature content.
 @Composable
 private fun NatureFrame(
     modifier: Modifier = Modifier,
@@ -359,7 +397,6 @@ private fun NatureFrame(
                 shape = RoundedCornerShape(28.dp)
             )
     ) {
-        // Your teammates' map or camera appears here.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -432,7 +469,9 @@ private fun VineDecoration(
                 drawPath(
                     path = stem,
                     color = LeafGreen,
-                    style = Stroke(width = 2.dp.toPx())
+                    style = Stroke(
+                        width = 2.dp.toPx()
+                    )
                 )
 
                 var leafY = top + step / 2f
@@ -448,7 +487,10 @@ private fun VineDecoration(
                     drawOval(
                         color = LeafGreen,
                         topLeft = Offset(leafX, leafY),
-                        size = Size(leafWidth, leafHeight)
+                        size = Size(
+                            leafWidth,
+                            leafHeight
+                        )
                     )
 
                     leafY += step / 2f
@@ -483,7 +525,9 @@ private fun ViewPlaceholder(
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(
+            modifier = Modifier.height(8.dp)
+        )
 
         Text(
             text = subtitle,

@@ -42,7 +42,7 @@ enum class Feature(
     Camera("Camera", "📷", "Discover your next nature find", listOf("photo", "picture", "cam")),
     Feed("COMING SOON Feed", "📰", "See what others have found", listOf("posts", "social")),
     Friends("COMING SOON Friends", "👥", "Explore with your friends", listOf("people", "social")),
-    Gallery("COMING SOON Gallery", "🖼️", "Browse your nature photos", listOf("photos", "pictures")),
+    Gallery("Gallery", "🖼️", "Browse your nature photos", listOf("photos", "pictures")),
     Learn("COMING SOON Learn", "📚", "Learn about local plants and wildlife", listOf("plants", "animals", "wildlife")),
 }
 
@@ -59,8 +59,8 @@ fun HomeScreen(
     val features = Feature.entries.filter { feature ->
         val search = query.trim()
         search.isEmpty() ||
-            feature.title.contains(search, ignoreCase = true) ||
-            feature.keywords.any { it.contains(search, ignoreCase = true) }
+                feature.title.contains(search, ignoreCase = true) ||
+                feature.keywords.any { it.contains(search, ignoreCase = true) }
     }
 
     Column(

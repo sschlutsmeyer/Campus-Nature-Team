@@ -27,6 +27,7 @@ import com.example.campusexplorer.ui.Feature
 import com.example.campusexplorer.ui.FeaturePlaceholder
 import com.example.campusexplorer.ui.NatureQuestScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
+import com.example.campusexplorer.ui.gallery.GalleryScreen
 import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import kotlinx.coroutines.launch
@@ -130,11 +131,12 @@ fun CampusExplorerApp() {
                 when (feature) {
                     Feature.Map -> MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
                     Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                    Feature.Gallery -> GalleryScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
                     else -> FeaturePlaceholder(feature)
                 }
             }
 
-        // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
+            // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
         } else {
 
             val contentModifier = Modifier.padding(innerPadding)

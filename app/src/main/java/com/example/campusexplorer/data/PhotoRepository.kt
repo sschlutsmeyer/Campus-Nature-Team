@@ -137,6 +137,38 @@ object PhotoRepository {
         awaitClose { registration.remove() }
     }
 
+    // Gallery query: retrieve only this user's photos. Sorting locally avoids a composite index.
+    fun observeOwnPhotos(uid: String): Flow<List<NaturePhoto>> = callbackFlow {
+        require(uid.isNotBlank())
+        var confirmedPhotos = emptyMap<String, NaturePhoto>()
+        val registration = photos.whereEqualTo("uid", uid)
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val updatedPhotos = snapshot?.documents.orEmpty().mapNotNull { doc ->
+                    if (doc.metadata.hasPendingWrites()) {
+                        return@mapNotNull confirmedPhotos[doc.id]
+                    }
+                    if (doc.getString("uid") != uid) return@mapNotNull null
+                    NaturePhoto(
+                        id = doc.id,
+                        caption = doc.getString("caption").orEmpty(),
+                        latitude = doc.getDouble("latitude"),
+                        longitude = doc.getDouble("longitude"),
+                        createdAt = doc.getTimestamp("createdAt")?.toDate(),
+                        uid = uid,
+                        storagePath = doc.getString("storagePath"),
+                    )
+                }.sortedWith(compareByDescending<NaturePhoto> { it.createdAt?.time ?: Long.MIN_VALUE }
+                    .thenBy { it.id })
+                confirmedPhotos = updatedPhotos.associateBy { it.id }
+                trySend(updatedPhotos)
+            }
+        awaitClose { registration.remove() }
+    }
+
     // Rename the existing pin without changing its image, location, owner, or time.
     suspend fun updateCaption(photo: NaturePhoto, caption: String) {
         val name = caption.trim()

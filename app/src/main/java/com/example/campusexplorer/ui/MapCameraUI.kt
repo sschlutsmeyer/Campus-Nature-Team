@@ -167,28 +167,12 @@ fun NatureQuestScreen(
         } else {
             val feature = Feature.valueOf(current)
 
-            val hideHeader =
-                feature == Feature.Map ||
-                        feature == Feature.Camera
-
             Column(
                 modifier = contentModifier
                     .padding(horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Map and Camera use the header space for their content.
-                if (!hideHeader) {
-                    Spacer(
-                        modifier = Modifier.height(16.dp)
-                    )
-
-                    QuestHeader()
-
-                    Spacer(
-                        modifier = Modifier.height(20.dp)
-                    )
-                }
-
+                // Branding appears on Home; feature screens use their own titles.
                 NatureFrame(
                     modifier = Modifier
                         .fillMaxWidth()

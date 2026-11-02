@@ -10,6 +10,7 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageException
 import com.google.firebase.storage.storageMetadata
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -95,11 +96,18 @@ object PhotoRepository {
     }
 
     // Live list of all photos, newest first. Sends a new list whenever anything changes.
-    fun observePhotos(): Flow<List<NaturePhoto>> = callbackFlow {
+    // Feed opts into errors so its screen can offer Retry. Existing callers keep their behavior.
+    fun observePhotos(failOnError: Boolean = false): Flow<List<NaturePhoto>> = callbackFlow {
         try {
             ensureSignedIn()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Sign-in failed; reads may be denied by security rules", e)
+            if (failOnError) {
+                close(e)
+                return@callbackFlow
+            }
         }
 
         // Keep an existing pin visible with its last confirmed name during an edit.
@@ -112,6 +120,7 @@ object PhotoRepository {
             .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Photo listener failed", error)
+                    if (failOnError) close(error)
                     return@addSnapshotListener
                 }
 

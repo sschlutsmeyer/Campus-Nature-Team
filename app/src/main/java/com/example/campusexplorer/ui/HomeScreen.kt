@@ -40,7 +40,7 @@ enum class Feature(
 ) {
     Map("Map", "🗺️", "Explore nature", listOf("pins", "location", "campus")),
     Camera("Camera", "📷", "Discover your next nature find", listOf("photo", "picture", "cam")),
-    Feed("COMING SOON Feed", "📰", "See what others have found", listOf("posts", "social")),
+    Feed("Feed", "📰", "See what others have found", listOf("posts", "social")),
     Friends("COMING SOON Friends", "👥", "Explore with your friends", listOf("people", "social")),
     Gallery("Gallery", "🖼️", "Browse your nature photos", listOf("photos", "pictures")),
     Learn("COMING SOON Learn", "📚", "Learn about local plants and wildlife", listOf("plants", "animals", "wildlife")),

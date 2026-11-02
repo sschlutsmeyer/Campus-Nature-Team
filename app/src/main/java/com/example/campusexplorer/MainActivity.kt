@@ -27,6 +27,7 @@ import com.example.campusexplorer.ui.Feature
 import com.example.campusexplorer.ui.FeaturePlaceholder
 import com.example.campusexplorer.ui.NatureQuestScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
+import com.example.campusexplorer.ui.feed.FeedScreen
 import com.example.campusexplorer.ui.gallery.GalleryScreen
 import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
@@ -132,6 +133,7 @@ fun CampusExplorerApp() {
                     Feature.Map -> MapScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
                     Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
                     Feature.Gallery -> GalleryScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                    Feature.Feed -> FeedScreen(modifier = Modifier.fillMaxSize())
                     else -> FeaturePlaceholder(feature)
                 }
             }

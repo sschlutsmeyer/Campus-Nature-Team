@@ -46,8 +46,14 @@ import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
 
+// onViewPost and onCreatePost are passed to the photo pop-up: they open a photo's post, or start one.
 @Composable
-fun GalleryScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun GalleryScreen(
+    onMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onViewPost: ((postId: String) -> Unit)? = null,
+    onCreatePost: ((NaturePhoto) -> Unit)? = null,
+) {
     val auth = remember { FirebaseAuth.getInstance() }
     var uid by remember { mutableStateOf(auth.currentUser?.uid) }
     var signInError by remember { mutableStateOf(false) }
@@ -73,7 +79,7 @@ fun GalleryScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
     // Recreate gallery state when accounts change so the previous user's photos disappear.
     val currentUid = uid
     if (currentUid != null) {
-        key(currentUid) { UserGallery(currentUid, onMessage, modifier) }
+        key(currentUid) { UserGallery(currentUid, onMessage, modifier, onViewPost, onCreatePost) }
     } else {
         Column(modifier.fillMaxSize().padding(14.dp)) {
             GalleryHeader(null)
@@ -87,7 +93,13 @@ fun GalleryScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun UserGallery(uid: String, onMessage: (String) -> Unit, modifier: Modifier) {
+private fun UserGallery(
+    uid: String,
+    onMessage: (String) -> Unit,
+    modifier: Modifier,
+    onViewPost: ((postId: String) -> Unit)?,
+    onCreatePost: ((NaturePhoto) -> Unit)?,
+) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var photos by remember { mutableStateOf<List<NaturePhoto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -116,7 +128,13 @@ private fun UserGallery(uid: String, onMessage: (String) -> Unit, modifier: Modi
 
     val selectedPhoto = photos.firstOrNull { it.id == selectedId }
     if (selectedPhoto != null && !failed) {
-        PhotoDetailsDialog(selectedPhoto, onDismiss = { selectedId = null }, onMessage = onMessage)
+        PhotoDetailsDialog(
+            selectedPhoto,
+            onDismiss = { selectedId = null },
+            onMessage = onMessage,
+            onViewPost = onViewPost,
+            onCreatePost = onCreatePost,
+        )
     }
     LaunchedEffect(photos, loading) {
         if (!loading && photos.none { it.id == selectedId }) selectedId = null

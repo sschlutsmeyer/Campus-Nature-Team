@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -109,10 +110,12 @@ private val HomeIcon: ImageVector = ImageVector.Builder(
 
 private const val HOME = "Home"
 
+// featureContent draws a feature's screen. Its second argument opens another feature, so screens can
+// link to each other (for example, a map pin's "View post" button opens the Feed).
 @Composable
 fun NatureQuestScreen(
-    featureContent: @Composable (Feature) -> Unit = {
-        FeaturePlaceholder(it)
+    featureContent: @Composable (feature: Feature, open: (Feature) -> Unit) -> Unit = { feature, _ ->
+        FeaturePlaceholder(feature)
     }
 ) {
     // Replace the whole list when navigating so Compose observes changes.
@@ -140,22 +143,30 @@ fun NatureQuestScreen(
         position--
     }
 
+    // The app draws behind the keyboard (edge-to-edge), so text boxes near the bottom, like the
+    // feed's comment box, would end up hidden. While the keyboard is up, hide the bottom bar and
+    // keep the screen above the keyboard.
+    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
     Scaffold(
         containerColor = Cream,
         bottomBar = {
-            NavigationBar(
-                canGoBack = canGoBack,
-                canGoForward = canGoForward,
-                onBack = { position-- },
-                onForward = { position++ },
-                onHome = { open(HOME) }
-            )
+            if (!keyboardOpen) {
+                NavigationBar(
+                    canGoBack = canGoBack,
+                    canGoForward = canGoForward,
+                    onBack = { position-- },
+                    onForward = { position++ },
+                    onHome = { open(HOME) }
+                )
+            }
         }
     ) { innerPadding ->
         val contentModifier = Modifier
             .fillMaxSize()
             .padding(innerPadding)
             .consumeWindowInsets(innerPadding)
+            .imePadding()
 
         if (current == HOME) {
             HomeScreen(
@@ -178,7 +189,7 @@ fun NatureQuestScreen(
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    featureContent(feature)
+                    featureContent(feature) { open(it.name) }
                 }
 
                 Spacer(

@@ -4,16 +4,20 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,9 +35,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.campusexplorer.data.FeedPost
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.NaturePhoto
+import com.example.campusexplorer.data.POST_TITLE_MAX
 import com.example.campusexplorer.data.PhotoRepository
+import com.example.campusexplorer.data.PostRepository
+import com.example.campusexplorer.ui.feed.authorLabel
+import com.example.campusexplorer.ui.feed.userMessage
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -43,9 +52,20 @@ import kotlinx.coroutines.withContext
 // Label for this file's messages in Logcat.
 private const val TAG = "PhotoDetailsDialog"
 
-// Pop-up that shows one photo, with Edit Name, Delete, Retry, and Close buttons.
+// Pop-up that shows one photo, with View post / Post to feed, Edit Name, Delete, Retry, and Close buttons.
+// Only the photo's owner can rename or delete it.
 @Composable
-fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (String) -> Unit) {
+fun PhotoDetailsDialog(
+    photo: NaturePhoto,
+    onDismiss: () -> Unit,
+    onMessage: (String) -> Unit,
+
+    // Opens this photo's post in the feed. Null hides the "View post" button.
+    onViewPost: ((postId: String) -> Unit)? = null,
+
+    // Starts a feed post with this photo (yours, not posted yet). Null hides the "Post to feed" button.
+    onCreatePost: ((NaturePhoto) -> Unit)? = null,
+) {
 
     // The image, whether it's loading, and any error message.
     var bitmap by remember(photo.id) { mutableStateOf<Bitmap?>(null) }
@@ -59,13 +79,19 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
     var confirmingDelete by remember(photo.id) { mutableStateOf(false) }
     var deleting by remember(photo.id) { mutableStateOf(false) }
 
-    // Names are captions in Firestore. Only the owner can rename a pin.
-    val canEdit = photo.uid != null && photo.uid == FirebaseAuth.getInstance().currentUser?.uid
+    // Names are captions in Firestore. Only the owner can rename or delete a pin.
+    val myUid = FirebaseAuth.getInstance().currentUser?.uid
+    val isOwner = photo.uid != null && photo.uid == myUid
     var displayedCaption by remember(photo.id, photo.caption) { mutableStateOf(photo.caption) }
     var editingName by remember(photo.id) { mutableStateOf(false) }
     var nameDraft by remember(photo.id) { mutableStateOf("") }
     var savingName by remember(photo.id) { mutableStateOf(false) }
     var nameError by remember(photo.id) { mutableStateOf<String?>(null) }
+
+    // This photo's feed post, if it has one (a photo post has the same id as its photo).
+    // postChecked stays false if posts can't be read, which hides both post buttons.
+    var post by remember(photo.id) { mutableStateOf<FeedPost?>(null) }
+    var postChecked by remember(photo.id) { mutableStateOf(false) }
 
     // Used to save a name or delete in the background.
     val scope = rememberCoroutineScope()
@@ -106,8 +132,25 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         }
     }
 
+    // Keep track of whether this photo has a post, so the right button shows.
+    LaunchedEffect(photo.id) {
+        try {
+            PostRepository.observePost(photo.id).collect {
+                post = it
+                postChecked = true
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Couldn't check whether photo ${photo.id} is posted", e)
+            postChecked = false
+        }
+    }
+
+    val busy = savingName || deleting
+
     AlertDialog(
-        onDismissRequest = { if (!savingName && !deleting) onDismiss() },
+        onDismissRequest = { if (!busy) onDismiss() },
         title = {
             Text(displayedCaption.ifBlank { "Nature photo" })
         },
@@ -115,6 +158,23 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         // Show a spinner, the error, or the photo.
         text = {
             Column {
+
+                // Who can see this pin: other users only see it once it's posted.
+                val visibility = when {
+                    !isOwner -> "Posted by ${authorLabel(photo.uid, myUid)}"
+                    !postChecked -> null
+                    post != null -> "Posted to the feed: everyone can see this pin."
+                    else -> "Private: only you can see this pin until you post it."
+                }
+                if (visibility != null) {
+                    Text(
+                        visibility,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+
                 Box(
                     modifier = Modifier.fillMaxWidth().height(280.dp),
                     contentAlignment = Alignment.Center,
@@ -139,35 +199,67 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                         )
                     }
                 }
-                if (canEdit) {
-                    TextButton(
-                        enabled = !deleting && !savingName,
-                        onClick = {
-                            nameDraft = displayedCaption
-                            nameError = null
-                            editingName = true
-                        },
-                    ) { Text("Edit Name") }
+
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val currentPost = post
+
+                    // Posted: jump to the post in the feed, opened up with its comments.
+                    if (currentPost != null && onViewPost != null) {
+                        Button(
+                            enabled = !busy,
+                            onClick = {
+                                onDismiss()
+                                onViewPost(currentPost.id)
+                            },
+                        ) { Text("View post") }
+
+                        // Your photo, not posted yet: start a post with it.
+                    } else if (postChecked && currentPost == null && isOwner && onCreatePost != null) {
+                        OutlinedButton(
+                            enabled = !busy,
+                            onClick = {
+                                onDismiss()
+                                onCreatePost(photo.copy(caption = displayedCaption))
+                            },
+                        ) { Text("Post to feed") }
+                    }
+
+                    if (isOwner) {
+                        TextButton(
+                            enabled = !busy,
+                            onClick = {
+                                nameDraft = displayedCaption
+                                nameError = null
+                                editingName = true
+                            },
+                        ) { Text("Edit Name") }
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss, enabled = !savingName && !deleting) {
+            TextButton(onClick = onDismiss, enabled = !busy) {
                 Text("Close")
             }
         },
         dismissButton = {
             Row {
 
-                // Red Delete button. Asks before deleting.
-                TextButton(
-                    onClick = { confirmingDelete = true },
-                    enabled = !deleting && !savingName,
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) {
-                    Text(if (deleting) "Deleting…" else "Delete")
+                // Red Delete button, for your own photos. Asks before deleting.
+                if (isOwner) {
+                    TextButton(
+                        onClick = { confirmingDelete = true },
+                        enabled = !busy,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) {
+                        Text(if (deleting) "Deleting…" else "Delete")
+                    }
                 }
 
                 // Retry only shows after a failed download.
@@ -188,7 +280,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                 OutlinedTextField(
                     value = nameDraft,
                     onValueChange = {
-                        nameDraft = it
+                        nameDraft = it.take(POST_TITLE_MAX)
                         nameError = null
                     },
                     label = { Text("Pin name") },
@@ -196,7 +288,13 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                     enabled = !savingName,
                     isError = nameError != null,
                     supportingText = {
-                        Text(nameError ?: "Enter a name for this pin.")
+                        Text(
+                            nameError ?: if (post != null) {
+                                "This also renames its feed post."
+                            } else {
+                                "Enter a name for this pin."
+                            }
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -214,13 +312,12 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                                 PhotoRepository.updateCaption(photo, newName)
                                 displayedCaption = newName
                                 editingName = false
-                                savingName = false
                                 onMessage("Pin name updated")
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
                                 Log.e(TAG, "Could not rename photo ${photo.id}", e)
-                                nameError = "Couldn't save the name. Check your connection and try again."
+                                nameError = userMessage(e, "Couldn't save the name.")
                             } finally {
                                 savingName = false
                             }
@@ -242,7 +339,16 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
         AlertDialog(
             onDismissRequest = { confirmingDelete = false },
             title = { Text("Delete photo?") },
-            text = { Text("This removes the photo for everyone and can't be undone.") },
+            text = {
+                Text(
+                    if (post != null) {
+                        "This removes the photo and its feed post (with its likes and comments) " +
+                            "for everyone, and can't be undone."
+                    } else {
+                        "This removes the photo for good and can't be undone."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -262,7 +368,7 @@ fun PhotoDetailsDialog(photo: NaturePhoto, onDismiss: () -> Unit, onMessage: (St
                                 throw e
                             } catch (e: Exception) {
                                 Log.e(TAG, "Could not delete photo ${photo.id}", e)
-                                onMessage("Delete failed: ${e.message}")
+                                onMessage(userMessage(e, "Delete failed."))
 
                                 // Let the user try again.
                                 deleting = false

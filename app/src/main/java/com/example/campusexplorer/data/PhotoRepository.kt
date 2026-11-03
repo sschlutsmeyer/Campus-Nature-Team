@@ -6,7 +6,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.MetadataChanges
-import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageException
 import com.google.firebase.storage.storageMetadata
@@ -14,6 +13,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import java.util.Date
 
@@ -38,6 +40,9 @@ data class NaturePhoto(
 //  - Firestore photos/{id}:           caption, latitude, longitude, createdAt, uid, storagePath
 //  - Storage photos/{uid}/{id}.jpg:   the image
 //  - Firestore photoImages/{id}:      image bytes for older photos saved before we used Storage
+//
+// Photos are private: only their owner can read them. Posting a photo to the feed (see
+// PostRepository) copies what other users need to see it (title, image path, location) into the post.
 object PhotoRepository {
 
     // Label for this file's messages in Logcat.
@@ -52,12 +57,35 @@ object PhotoRepository {
     private val photos get() = db.collection("photos")
     private val legacyImages get() = db.collection("photoImages")
 
+    // Only one sign-in at a time. Several screens and listeners start at once, and two sign-ins
+    // running together could create two different anonymous users.
+    private val signInLock = Mutex()
+
     // Signs in anonymously if needed and returns the user's id. Firebase rules require sign-in.
     suspend fun ensureSignedIn(): String {
         val auth = FirebaseAuth.getInstance()
         auth.currentUser?.let { return it.uid }
-        return checkNotNull(auth.signInAnonymously().await().user).uid
+        return signInLock.withLock {
+            auth.currentUser?.uid ?: checkNotNull(auth.signInAnonymously().await().user).uid
+        }
     }
+
+    // The signed-in user's id, live. Signs in anonymously first if needed. Sends null if signed out.
+    fun observeUserId(): Flow<String?> = callbackFlow {
+        try {
+            ensureSignedIn()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Sign-in failed; reads may be denied by security rules", e)
+        }
+
+        // Called right away with the current user, then again whenever it changes.
+        val auth = FirebaseAuth.getInstance()
+        val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser?.uid) }
+        auth.addAuthStateListener(listener)
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }.distinctUntilChanged()
 
     // Uploads the image, saves its info, and returns the new photo's id.
     suspend fun save(jpeg: ByteArray, caption: String, location: Location?): String {
@@ -95,60 +123,13 @@ object PhotoRepository {
         return photoRef.id
     }
 
-    // Live list of all photos, newest first. Sends a new list whenever anything changes.
-    // Feed opts into errors so its screen can offer Retry. Existing callers keep their behavior.
-    fun observePhotos(failOnError: Boolean = false): Flow<List<NaturePhoto>> = callbackFlow {
-        try {
-            ensureSignedIn()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Sign-in failed; reads may be denied by security rules", e)
-            if (failOnError) {
-                close(e)
-                return@callbackFlow
-            }
-        }
+    // Live list of one user's photos, newest first. Used by the gallery, the map, and the post picker.
+    // Photos are private, so this is the only way to list them. Sorting locally avoids a composite index.
+    fun observeOwnPhotos(uid: String): Flow<List<NaturePhoto>> = callbackFlow {
+        require(uid.isNotBlank())
 
         // Keep an existing pin visible with its last confirmed name during an edit.
         // A new photo still waits for its first confirmed save before appearing.
-        var confirmedPhotos = emptyMap<String, NaturePhoto>()
-
-        // Include acknowledgements even when only pending-write metadata changes.
-        val registration = photos
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
-                if (error != null) {
-                    Log.w(TAG, "Photo listener failed", error)
-                    if (failOnError) close(error)
-                    return@addSnapshotListener
-                }
-
-                val updatedPhotos = snapshot?.documents.orEmpty().mapNotNull { doc ->
-                    if (doc.metadata.hasPendingWrites()) {
-                        return@mapNotNull confirmedPhotos[doc.id]
-                    }
-                    NaturePhoto(
-                        id = doc.id,
-                        caption = doc.getString("caption").orEmpty(),
-                        latitude = doc.getDouble("latitude"),
-                        longitude = doc.getDouble("longitude"),
-                        createdAt = doc.getTimestamp("createdAt")?.toDate(),
-                        uid = doc.getString("uid"),
-                        storagePath = doc.getString("storagePath"),
-                    )
-                }
-                confirmedPhotos = updatedPhotos.associateBy { it.id }
-                trySend(updatedPhotos)
-            }
-
-        // Stop listening when nobody needs the list anymore.
-        awaitClose { registration.remove() }
-    }
-
-    // Gallery query: retrieve only this user's photos. Sorting locally avoids a composite index.
-    fun observeOwnPhotos(uid: String): Flow<List<NaturePhoto>> = callbackFlow {
-        require(uid.isNotBlank())
         var confirmedPhotos = emptyMap<String, NaturePhoto>()
         val registration = photos.whereEqualTo("uid", uid)
             .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
@@ -179,12 +160,23 @@ object PhotoRepository {
     }
 
     // Rename the existing pin without changing its image, location, owner, or time.
+    // A posted photo's post title is its pin name, so its post is renamed along with it.
     suspend fun updateCaption(photo: NaturePhoto, caption: String) {
         val name = caption.trim()
         require(name.isNotEmpty()) { "Enter a pin name." }
+        require(name.length <= POST_TITLE_MAX) { "Pin names can be up to $POST_TITLE_MAX characters." }
         val uid = ensureSignedIn()
         check(photo.uid == uid) { "You can only edit pins you created." }
-        photos.document(photo.id).update("caption", name).await()
+        val photoRef = photos.document(photo.id)
+        if (PostRepository.postExists(photo.id)) {
+            db.batch()
+                .update(photoRef, "caption", name)
+                .update(PostRepository.postRefForPhoto(photo.id), "title", name)
+                .commit()
+                .await()
+        } else {
+            photoRef.update("caption", name).await()
+        }
     }
 
     // Downloads a photo's JPEG bytes, or returns null if the image is missing.
@@ -203,11 +195,14 @@ object PhotoRepository {
         }
     }
 
-    // Deletes a photo's info and image. An already-missing image is fine.
+    // Deletes a photo's info and image, and its feed post if it has one. An already-missing image is fine.
     suspend fun delete(photo: NaturePhoto) {
         ensureSignedIn()
 
-        // Delete the info first so the pin disappears. If the image delete then fails, we're left
+        // Remove the post (and its comments) first, so the feed never shows a post whose photo is gone.
+        if (PostRepository.postExists(photo.id)) PostRepository.deletePostAndComments(photo.id)
+
+        // Delete the info next so the pin disappears. If the image delete then fails, we're left
         // with an unused file in Storage instead of a pin with no photo.
         photos.document(photo.id).delete().await()
 

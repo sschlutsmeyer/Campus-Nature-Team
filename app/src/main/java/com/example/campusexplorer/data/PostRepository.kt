@@ -41,6 +41,7 @@ data class FeedPost(
     val photoTakenAt: Date?,
 
     // The ids of the users who liked and disliked it. A user can be in at most one.
+    val bookmarkedBy: List<String> = emptyList(),
     val likedBy: Set<String>,
     val dislikedBy: Set<String>,
     val commentCount: Int,
@@ -196,6 +197,18 @@ object PostRepository {
             Reaction.NONE -> FieldValue.arrayRemove(uid) to FieldValue.arrayRemove(uid)
         }
         posts.document(post.id).update("likedBy", likes, "dislikedBy", dislikes).await()
+    }
+
+    // Bookmarks or unbookmarks a post for the signed-in user.
+    suspend fun toggleBookmark(post: FeedPost) {
+        val uid = PhotoRepository.ensureSignedIn()
+        val isBookmarked = uid in post.bookmarkedBy
+        val update = if (isBookmarked) {
+            FieldValue.arrayRemove(uid)
+        } else {
+            FieldValue.arrayUnion(uid)
+        }
+        posts.document(post.id).update("bookmarkedBy", update).await()
     }
 
     // Live list of a post's comments, oldest first.

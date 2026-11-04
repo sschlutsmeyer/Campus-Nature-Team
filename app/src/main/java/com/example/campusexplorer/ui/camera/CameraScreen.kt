@@ -58,6 +58,7 @@ import com.example.campusexplorer.data.LocationHelper
 import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.compressForUpload
 import com.example.campusexplorer.data.toUprightBitmap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -317,6 +318,10 @@ private fun PhotoReview(
                             // Warn that a photo without a location won't get a map pin.
                             if (location == null) onMessage("Saved without location (permission off or GPS unavailable)")
                             onSaved()
+
+                            // Leaving the screen stops the save. That's not an error to report.
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e(TAG, "Save failed", e)
                             onMessage("Save failed: ${e.message}")

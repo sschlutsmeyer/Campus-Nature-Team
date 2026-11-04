@@ -1,18 +1,21 @@
 package com.example.campusexplorer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -27,21 +30,58 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val Turquoise = Color(0xFF008C95)
-private val CampusRed = Color(0xFFC6323A)
-private val LeafGreen = Color(0xFF427A46)
-private val Cream = Color(0xFFF7F8F2)
-private val LightGreen = Color(0xFFE8F3EC)
+internal val Turquoise = Color(0xFF008C95)
+internal val CampusRed = Color(0xFFC6323A)
+internal val LeafGreen = Color(0xFF427A46)
+internal val Cream = Color(0xFFF7F8F2)
+internal val LightGreen = Color(0xFFE8F3EC)
 
-// Map icon: no extra icon dependency needed.
-private val MapTabIcon: ImageVector = ImageVector.Builder(
-    name = "Map",
+// Navigation icons require no additional icon dependencies.
+private val BackIcon: ImageVector = ImageVector.Builder(
+    name = "Back",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2.2f
+    ) {
+        moveTo(15f, 5f)
+        lineTo(8f, 12f)
+        lineTo(15f, 19f)
+    }
+}.build()
+
+private val ForwardIcon: ImageVector = ImageVector.Builder(
+    name = "Forward",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2.2f
+    ) {
+        moveTo(9f, 5f)
+        lineTo(16f, 12f)
+        lineTo(9f, 19f)
+    }
+}.build()
+
+private val HomeIcon: ImageVector = ImageVector.Builder(
+    name = "Home",
     defaultWidth = 24.dp,
     defaultHeight = 24.dp,
     viewportWidth = 24f,
@@ -52,147 +92,204 @@ private val MapTabIcon: ImageVector = ImageVector.Builder(
         stroke = SolidColor(Color.Black),
         strokeLineWidth = 1.8f
     ) {
-        moveTo(3f, 6f)
-        lineTo(9f, 3f)
-        lineTo(15f, 6f)
-        lineTo(21f, 3f)
-        lineTo(21f, 18f)
-        lineTo(15f, 21f)
-        lineTo(9f, 18f)
-        lineTo(3f, 21f)
-        close()
+        moveTo(3f, 11f)
+        lineTo(12f, 3f)
+        lineTo(21f, 11f)
 
-        moveTo(9f, 3f)
-        lineTo(9f, 18f)
+        moveTo(5f, 9.5f)
+        lineTo(5f, 21f)
+        lineTo(19f, 21f)
+        lineTo(19f, 9.5f)
 
-        moveTo(15f, 6f)
-        lineTo(15f, 21f)
+        moveTo(10f, 21f)
+        lineTo(10f, 15f)
+        lineTo(14f, 15f)
+        lineTo(14f, 21f)
     }
 }.build()
 
-// Camera icon: no extra icon dependency needed.
-private val CameraTabIcon: ImageVector = ImageVector.Builder(
-    name = "Camera",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 1.8f
-    ) {
-        moveTo(3f, 7f)
-        lineTo(7f, 7f)
-        lineTo(9f, 4f)
-        lineTo(15f, 4f)
-        lineTo(17f, 7f)
-        lineTo(21f, 7f)
-        lineTo(21f, 20f)
-        lineTo(3f, 20f)
-        close()
+private const val HOME = "Home"
 
-        moveTo(16f, 13f)
-        curveTo(16f, 15.21f, 14.21f, 17f, 12f, 17f)
-        curveTo(9.79f, 17f, 8f, 15.21f, 8f, 13f)
-        curveTo(8f, 10.79f, 9.79f, 9f, 12f, 9f)
-        curveTo(14.21f, 9f, 16f, 10.79f, 16f, 13f)
-        close()
-    }
-}.build()
-
+// featureContent draws a feature's screen. Its second argument opens another feature, so screens can
+// link to each other (for example, a map pin's "View post" button opens the Feed).
 @Composable
 fun NatureQuestScreen(
-    mapContent: @Composable () -> Unit = {
-        ViewPlaceholder(
-            title = "Campus Map",
-            subtitle = "Explore nature around CSUCI",
-            background = Color(0xFFE4EEE2),
-            foreground = Color(0xFF294C39)
-        )
-    },
-    cameraContent: @Composable () -> Unit = {
-        ViewPlaceholder(
-            title = "Nature Camera",
-            subtitle = "Discover your next nature find",
-            background = Color(0xFF202C2B),
-            foreground = Color.White
-        )
+    featureContent: @Composable (feature: Feature, open: (Feature) -> Unit) -> Unit = { feature, _ ->
+        FeaturePlaceholder(feature)
     }
 ) {
-    var selectedTab by rememberSaveable {
-        mutableStateOf("Map")
+    // Replace the whole list when navigating so Compose observes changes.
+    var history by rememberSaveable {
+        mutableStateOf(listOf(HOME))
     }
+
+    var position by rememberSaveable {
+        mutableIntStateOf(0)
+    }
+
+    val current = history[position]
+    val canGoBack = position > 0
+    val canGoForward = position < history.lastIndex
+
+    fun open(screen: String) {
+        if (screen == current) return
+
+        // Remove forward history before opening a new screen.
+        history = history.take(position + 1) + screen
+        position = history.lastIndex
+    }
+
+    BackHandler(enabled = canGoBack) {
+        position--
+    }
+
+    // The app draws behind the keyboard (edge-to-edge), so text boxes near the bottom, like the
+    // feed's comment box, would end up hidden. While the keyboard is up, hide the bottom bar and
+    // keep the screen above the keyboard.
+    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     Scaffold(
         containerColor = Cream,
         bottomBar = {
-            Surface(
-                color = Color.White,
-                shadowElevation = 8.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(
-                            horizontal = 20.dp,
-                            vertical = 12.dp
-                        ),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    TabButton(
-                        title = "Map",
-                        icon = MapTabIcon,
-                        selected = selectedTab == "Map",
-                        onClick = { selectedTab = "Map" },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    TabButton(
-                        title = "Camera",
-                        icon = CameraTabIcon,
-                        selected = selectedTab == "Camera",
-                        onClick = { selectedTab = "Camera" },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+            if (!keyboardOpen) {
+                NavigationBar(
+                    canGoBack = canGoBack,
+                    canGoForward = canGoForward,
+                    onBack = { position-- },
+                    onForward = { position++ },
+                    onHome = { open(HOME) }
+                )
             }
         }
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(modifier = Modifier.height(16.dp))
+        val contentModifier = Modifier
+            .fillMaxSize()
+            .padding(innerPadding)
+            .consumeWindowInsets(innerPadding)
+            .imePadding()
 
-            QuestHeader()
+        if (current == HOME) {
+            HomeScreen(
+                onFeatureSelected = { feature ->
+                    open(feature.name)
+                },
+                modifier = contentModifier
+            )
+        } else {
+            val feature = Feature.valueOf(current)
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Expands to fill all remaining space.
-            NatureFrame(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+            Column(
+                modifier = contentModifier
+                    .padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (selectedTab == "Map") {
-                    mapContent()
-                } else {
-                    cameraContent()
+                // Branding appears on Home; feature screens use their own titles.
+                NatureFrame(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    featureContent(feature) { open(it.name) }
                 }
+
+                Spacer(
+                    modifier = Modifier.height(16.dp)
+                )
             }
         }
     }
 }
 
+// Back and forward on the left, home in the center.
 @Composable
-private fun QuestHeader() {
+private fun NavigationBar(
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onHome: () -> Unit
+) {
+    Surface(
+        color = Color.White,
+        shadowElevation = 8.dp
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(
+                    horizontal = 20.dp,
+                    vertical = 10.dp
+                )
+        ) {
+            Row(
+                modifier = Modifier.align(Alignment.CenterStart),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    enabled = canGoBack
+                ) {
+                    Icon(
+                        imageVector = BackIcon,
+                        contentDescription = "Back",
+                        tint = if (canGoBack) {
+                            Turquoise
+                        } else {
+                            Turquoise.copy(alpha = 0.3f)
+                        }
+                    )
+                }
+
+                IconButton(
+                    onClick = onForward,
+                    enabled = canGoForward
+                ) {
+                    Icon(
+                        imageVector = ForwardIcon,
+                        contentDescription = "Forward",
+                        tint = if (canGoForward) {
+                            Turquoise
+                        } else {
+                            Turquoise.copy(alpha = 0.3f)
+                        }
+                    )
+                }
+            }
+
+            FilledIconButton(
+                onClick = onHome,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(52.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = Turquoise,
+                    contentColor = Color.White
+                )
+            ) {
+                Icon(
+                    imageVector = HomeIcon,
+                    contentDescription = "Home",
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        }
+    }
+}
+
+// Shown for features without an implemented screen.
+@Composable
+fun FeaturePlaceholder(feature: Feature) {
+    ViewPlaceholder(
+        title = "${feature.emoji} ${feature.title}",
+        subtitle = "${feature.subtitle}\n\nComing soon!",
+        background = Color(0xFFE4EEE2),
+        foreground = Color(0xFF294C39)
+    )
+}
+
+@Composable
+internal fun QuestHeader() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -229,7 +326,9 @@ private fun QuestHeader() {
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -256,7 +355,9 @@ private fun QuestHeader() {
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
 
             Text(
                 text = "CSU Channel Islands",
@@ -275,44 +376,7 @@ private fun QuestHeader() {
     }
 }
 
-@Composable
-private fun TabButton(
-    title: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.heightIn(min = 52.dp),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(
-            horizontal = 12.dp,
-            vertical = 12.dp
-        ),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) Turquoise else Cream,
-            contentColor = if (selected) Color.White else Turquoise
-        )
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(22.dp)
-        )
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = title,
-            fontFamily = FontFamily.Serif,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
+// Decorative frame around feature content.
 @Composable
 private fun NatureFrame(
     modifier: Modifier = Modifier,
@@ -328,7 +392,6 @@ private fun NatureFrame(
                 shape = RoundedCornerShape(28.dp)
             )
     ) {
-        // Your teammates' map or camera appears here.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -401,7 +464,9 @@ private fun VineDecoration(
                 drawPath(
                     path = stem,
                     color = LeafGreen,
-                    style = Stroke(width = 2.dp.toPx())
+                    style = Stroke(
+                        width = 2.dp.toPx()
+                    )
                 )
 
                 var leafY = top + step / 2f
@@ -417,7 +482,10 @@ private fun VineDecoration(
                     drawOval(
                         color = LeafGreen,
                         topLeft = Offset(leafX, leafY),
-                        size = Size(leafWidth, leafHeight)
+                        size = Size(
+                            leafWidth,
+                            leafHeight
+                        )
                     )
 
                     leafY += step / 2f
@@ -452,7 +520,9 @@ private fun ViewPlaceholder(
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(
+            modifier = Modifier.height(8.dp)
+        )
 
         Text(
             text = subtitle,

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -16,9 +17,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -28,550 +31,345 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import com.example.campusexplorer.data.LearnGroup
-import com.example.campusexplorer.data.LearnRegion
-import com.example.campusexplorer.data.LearnSampleData
-import com.example.campusexplorer.data.LearnSort
-import com.example.campusexplorer.data.LearnSpecies
+import com.example.campusexplorer.data.*
 import com.example.campusexplorer.ui.LeafGreen
 import com.example.campusexplorer.ui.LightGreen
 import com.example.campusexplorer.ui.Turquoise
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import java.text.Collator
+import kotlinx.coroutines.launch
+import java.text.NumberFormat
 
-private val LearnText = Color(0xFF294C39)
+internal val LearnText = Color(0xFF294C39)
 
 @Composable
 fun LearnScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current.applicationContext
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val focus = LocalFocusManager.current
-
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     var expanded by rememberSaveable { mutableStateOf(true) }
-
-    var sort by rememberSaveable {
-        mutableStateOf(LearnSort.AZ)
-    }
-
-    var region by rememberSaveable {
-        mutableStateOf(LearnRegion.ALL)
-    }
-
-    var group by rememberSaveable {
-        mutableStateOf(LearnGroup.ALL)
-    }
-
+    var sort by rememberSaveable { mutableStateOf(LearnSort.AZ) }
+    var region by rememberSaveable { mutableStateOf(LearnRegion.ALL) }
+    var group by rememberSaveable { mutableStateOf(LearnGroup.ALL) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
-    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var retry by remember { mutableIntStateOf(0) }
+    var rows by remember { mutableStateOf<List<LearnSpecies>>(emptyList()) }
+    var total by remember { mutableLongStateOf(0) }
+    var page by remember { mutableIntStateOf(0) }
+    var hasMore by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var moreJob by remember { mutableStateOf<Job?>(null) }
+    var generation by remember { mutableIntStateOf(0) }
 
-    var daily by remember {
-        mutableStateOf(LearnSampleData.dailySpecies(context))
-    }
+    var day by remember { mutableStateOf(INaturalistRepository.todayKey()) }
+    var daily by remember { mutableStateOf<LearnSpecies?>(null) }
+    var dailyLoading by remember { mutableStateOf(true) }
+    var dailyError by remember { mutableStateOf<String?>(null) }
+    var dailyRetry by remember { mutableIntStateOf(0) }
 
-    // Check for a new day while this screen is visible.
-    LaunchedEffect(lifecycle, context) {
+    LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
-                daily = LearnSampleData.dailySpecies(context)
-                delay(60_000)
+                day = INaturalistRepository.todayKey()
+                delay(30_000)
+            }
+        }
+    }
+    LaunchedEffect(day, dailyRetry) {
+        daily = null
+        dailyLoading = true
+        dailyError = null
+        try {
+            daily = INaturalistRepository.dailySpecies(context)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            dailyError = e.message ?: "Couldn't load today's species."
+        } finally {
+            if (currentCoroutineContext().isActive) dailyLoading = false
+        }
+    }
+
+    // Cancelling the effect prevents older searches from replacing newer results.
+    LaunchedEffect(query, region, group, retry) {
+        moreJob?.cancel()
+        generation++
+        loadingMore = false
+        loading = true
+        error = null
+        rows = emptyList()
+        total = 0
+        page = 0
+        hasMore = false
+        listState.scrollToItem(0)
+        try {
+            if (query.isNotBlank()) delay(500)
+            val result = INaturalistRepository.search(query, region, group)
+            rows = result.species
+            total = result.total
+            hasMore = result.hasMore
+            page = 1
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.message ?: "Couldn't load species. Check your connection and try again."
+        } finally {
+            if (currentCoroutineContext().isActive) loading = false
+        }
+    }
+
+    fun loadMore() {
+        if (loading || loadingMore || !hasMore) return
+        val requestGeneration = generation
+        val nextPage = page + 1
+        val search = query
+        val requestRegion = region
+        val requestGroup = group
+        loadingMore = true
+        error = null
+        moreJob = scope.launch {
+            try {
+                val result = INaturalistRepository.search(search, requestRegion, requestGroup, nextPage)
+                if (generation == requestGeneration) {
+                    rows = (rows + result.species).distinctBy { it.id }
+                    total = result.total
+                    hasMore = result.hasMore
+                    page = nextPage
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == requestGeneration) error = e.message ?: "Couldn't load more species."
+            } finally {
+                if (generation == requestGeneration) loadingMore = false
             }
         }
     }
 
-    val collator = remember { Collator.getInstance() }
+    val sorted = remember(rows, sort) { sortLearnSpecies(rows, sort) }
+    val formattedTotal = NumberFormat.getIntegerInstance().format(total)
+    Column(modifier.fillMaxSize().background(Color.White).padding(12.dp)) {
+        Text("Learn", color = LearnText, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Text("Explore the natural world", color = Turquoise, fontSize = 14.sp)
+        Text("Species data from iNaturalist", color = Color.DarkGray, fontSize = 11.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
 
-    // Search and filter the sample entries, then sort the results.
-    val visibleSpecies = remember(query, sort, region, group) {
-        val search = query.trim()
-
-        val matching = LearnSampleData.species.filter {
-            (region == LearnRegion.ALL || region in it.sampleRegions) &&
-                    (group == LearnGroup.ALL || group == it.group) &&
-                    (
-                            it.name.contains(search, ignoreCase = true) ||
-                                    it.scientificName.contains(search, ignoreCase = true)
-                            )
-        }.sortedWith(
-            Comparator { a, b ->
-                collator.compare(a.name, b.name)
-            }
-        )
-
-        if (sort == LearnSort.ZA) {
-            matching.reversed()
-        } else {
-            matching
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.White)
-            .padding(12.dp)
-    ) {
-        Text(
-            text = "Learn",
-            color = LearnText,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            text = "Explore the natural world",
-            color = Turquoise,
-            fontSize = 14.sp
-        )
-
-        Text(
-            text = "Sample species",
-            color = Color.Gray,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-        )
-
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Hide the daily species immediately when typing begins.
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (query.isEmpty()) {
                 item(key = "daily") {
-                    DailySpeciesCard(
-                        species = daily,
-                        expanded = expanded,
+                    DailySpeciesCard(daily, expanded, dailyLoading, dailyError,
                         onToggle = { expanded = !expanded },
-                        onOpen = {
-                            focus.clearFocus()
-                            selectedId = daily.id
-                        }
-                    )
+                        onRetry = { dailyRetry++ },
+                        onOpen = { focus.clearFocus(); selectedId = it.id })
                 }
             }
-
             item(key = "heading") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (query.isEmpty()) {
-                            "All species"
-                        } else {
-                            "Search results"
-                        },
-                        modifier = Modifier.weight(1f),
-                        color = LearnText,
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    TextButton(
-                        onClick = {
-                            focus.clearFocus()
-                            showFilters = true
-                        }
-                    ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (query.isEmpty()) "Browse species" else "Search results",
+                        modifier = Modifier.weight(1f), color = LearnText,
+                        fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = { focus.clearFocus(); showFilters = true }) {
                         Text("Filters", color = Turquoise)
                     }
                 }
-
-                Text(
-                    text = "${sort.label} · ${region.label} · ${group.label}",
-                    color = Color.DarkGray,
-                    fontSize = 12.sp
-                )
+                Text("${sort.label} · ${region.label} · ${group.label}", color = Color.DarkGray, fontSize = 12.sp)
+                if (!loading) {
+                    Text("${rows.size} loaded · $formattedTotal matches", color = Color.DarkGray, fontSize = 11.sp)
+                }
+                Text("Alphabetical order applies to loaded species. Load more or search to narrow the list.",
+                    color = Color.DarkGray, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                if (region != LearnRegion.ALL || group != LearnGroup.ALL) {
+                    Text(if (region == LearnRegion.CAMPUS) "Recorded within 5 km of CSU Channel Islands."
+                    else "Species with verifiable iNaturalist observations matching these filters.",
+                        color = LeafGreen, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                }
             }
-
-            if (visibleSpecies.isEmpty()) {
+            if (loading) {
+                item(key = "loading") { LoadingSpecies() }
+            } else if (rows.isEmpty() && error == null) {
                 item(key = "empty") {
-                    Text(
-                        text = "No sample species match. Try another search or reset the filters.",
-                        color = LearnText,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
+                    Text("No species found. Try another name or reset the filters.", color = LearnText,
+                        modifier = Modifier.padding(vertical = 20.dp))
                 }
             }
-
-            items(
-                items = visibleSpecies,
-                key = { it.id }
-            ) { species ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            role = Role.Button,
-                            onClickLabel = "View ${species.name}"
-                        ) {
-                            focus.clearFocus()
-                            selectedId = species.id
-                        }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .background(
-                                LightGreen,
-                                RoundedCornerShape(12.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = species.illustration,
-                            fontSize = 28.sp
-                        )
+            items(sorted, key = { "species:${it.id}" }) { species ->
+                Row(Modifier.fillMaxWidth().clickable(role = Role.Button,
+                    onClickLabel = "View ${species.name}") {
+                    focus.clearFocus()
+                    selectedId = species.id
+                }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SpeciesPhoto(species, Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)), showCredit = false)
+                    Column(Modifier.weight(1f)) {
+                        Text(species.name, color = LearnText, fontWeight = FontWeight.SemiBold)
+                        Text(species.scientificName, color = Color.DarkGray,
+                            fontSize = 12.sp, fontStyle = FontStyle.Italic)
                     }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = species.name,
-                            color = LearnText,
-                            fontWeight = FontWeight.SemiBold
-                        )
-
-                        Text(
-                            text = species.scientificName,
-                            color = Color.DarkGray,
-                            fontSize = 12.sp,
-                            fontStyle = FontStyle.Italic
-                        )
-                    }
-
-                    Text(
-                        text = "›",
-                        color = Turquoise,
-                        fontSize = 24.sp
-                    )
+                    Text("›", color = Turquoise, fontSize = 24.sp)
                 }
-
                 HorizontalDivider(color = LightGreen)
+            }
+            if (error != null) {
+                item(key = "error") {
+                    Text(error.orEmpty(), color = LearnText)
+                    TextButton(onClick = { if (page == 0) retry++ else loadMore() }) {
+                        Text("Try again", color = Turquoise)
+                    }
+                }
+            }
+            if (loadingMore) {
+                item(key = "loadingMore") { LoadingSpecies() }
+            } else if (!loading && hasMore && error == null) {
+                item(key = "more") {
+                    OutlinedButton(onClick = { loadMore() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Load more species", color = Turquoise)
+                    }
+                }
+            } else if (!loading && error == null && total > rows.size && !hasMore) {
+                item(key = "limit") { Text("Narrow your search or filters to explore more matches.",
+                    fontSize = 12.sp, color = Color.DarkGray) }
             }
         }
 
-        // Pinned below the list. The shared app layout handles the keyboard.
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Search species...") },
-            singleLine = true,
-            shape = RoundedCornerShape(24.dp),
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    TextButton(onClick = { query = "" }) {
-                        Text("Clear", color = Turquoise)
-                    }
-                }
-            },
-            keyboardOptions = KeyboardOptions(
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = { focus.clearFocus() }
-            ),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = LearnText,
-                unfocusedTextColor = LearnText,
-                focusedBorderColor = Turquoise,
-                unfocusedBorderColor = Turquoise,
-                cursorColor = Turquoise,
-                focusedContainerColor = Color.White,
-                unfocusedContainerColor = Color.White
-            )
-        )
+        OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Search species...") }, singleLine = true, shape = RoundedCornerShape(24.dp),
+            trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) {
+                Text("Clear", color = Turquoise)
+            } }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
+            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = LearnText, unfocusedTextColor = LearnText,
+                focusedBorderColor = Turquoise, unfocusedBorderColor = Turquoise, cursorColor = Turquoise,
+                focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
     }
-
     if (showFilters) {
-        LearnFilters(
-            sort = sort,
-            region = region,
-            group = group,
-            onDismiss = { showFilters = false },
+        LearnFilters(sort, region, group, onDismiss = { showFilters = false },
             onApply = { newSort, newRegion, newGroup ->
                 sort = newSort
                 region = newRegion
                 group = newGroup
                 showFilters = false
-            }
-        )
+            })
     }
-
-    // Temporary details dialog for the sample entries.
-    LearnSampleData.species
-        .firstOrNull { it.id == selectedId }
-        ?.let { species ->
-            AlertDialog(
-                onDismissRequest = { selectedId = null },
-                containerColor = Color.White,
-                title = {
-                    Text(species.name, color = LearnText)
-                },
-                text = {
-                    Column {
-                        Text(
-                            species.illustration,
-                            fontSize = 64.sp
-                        )
-
-                        Text(
-                            species.scientificName,
-                            color = LearnText,
-                            fontStyle = FontStyle.Italic
-                        )
-
-                        Text(
-                            species.group.label,
-                            color = LeafGreen,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        Text(
-                            text = "This is a sample entry. Species photos and information will be added when iNaturalist is connected.",
-                            color = Color.DarkGray
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { selectedId = null }) {
-                        Text("Close", color = Turquoise)
-                    }
-                }
-            )
-        }
+    selectedId?.let { id ->
+        val initial = rows.firstOrNull { it.id == id } ?: daily?.takeIf { it.id == id }
+        SpeciesDetailsDialog(id, initial, onDismiss = { selectedId = null })
+    }
 }
 
 @Composable
-private fun DailySpeciesCard(
-    species: LearnSpecies,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    onOpen: () -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = LightGreen
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(
-                    role = Role.Button,
-                    onClickLabel = if (expanded) {
-                        "Minimize daily species"
-                    } else {
-                        "Expand daily species"
-                    },
-                    onClick = onToggle
-                )
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Species of the Day",
-                modifier = Modifier.weight(1f),
-                color = LeafGreen,
-                fontWeight = FontWeight.Bold
-            )
+private fun LoadingSpecies() {
+    Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Turquoise, modifier = Modifier.size(26.dp))
+    }
+}
 
-            Text(
-                text = if (expanded) "⌃" else "⌄",
-                color = Turquoise,
-                fontSize = 24.sp
-            )
+@Composable
+private fun DailySpeciesCard(species: LearnSpecies?, expanded: Boolean, loading: Boolean, error: String?,
+                             onToggle: () -> Unit, onRetry: () -> Unit, onOpen: (LearnSpecies) -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = LightGreen), shape = RoundedCornerShape(16.dp)) {
+        Row(Modifier.fillMaxWidth().clickable(role = Role.Button,
+            onClickLabel = if (expanded) "Minimize daily species" else "Expand daily species",
+            onClick = onToggle).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Species of the Day", Modifier.weight(1f), color = LeafGreen, fontWeight = FontWeight.Bold)
+            Text(if (expanded) "⌃" else "⌄", color = Turquoise, fontSize = 24.sp)
         }
-
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        role = Role.Button,
-                        onClickLabel = "View ${species.name}",
-                        onClick = onOpen
-                    )
-                    .padding(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(105.dp)
-                        .background(
-                            Color.White,
-                            RoundedCornerShape(12.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = species.illustration,
-                        fontSize = 64.sp
-                    )
+        AnimatedVisibility(expanded) {
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                when {
+                    loading -> LoadingSpecies()
+                    error != null -> {
+                        Text(error, color = LearnText)
+                        TextButton(onClick = onRetry) { Text("Try again", color = Turquoise) }
+                    }
+                    species != null -> {
+                        Column(Modifier.fillMaxWidth().clickable(role = Role.Button,
+                            onClickLabel = "View ${species.name}", onClick = { onOpen(species) })) {
+                            SpeciesPhoto(species,
+                                Modifier.fillMaxWidth().height(130.dp).clip(RoundedCornerShape(12.dp)))
+                            Text(species.name, color = LearnText, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 8.dp))
+                            Text(species.scientificName, color = LearnText, fontStyle = FontStyle.Italic, fontSize = 13.sp)
+                        }
+                        SpeciesQuickFacts(species)
+                    }
                 }
-
-                Text(
-                    text = species.name,
-                    color = LearnText,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-
-                Text(
-                    text = species.scientificName,
-                    color = LearnText,
-                    fontStyle = FontStyle.Italic,
-                    fontSize = 13.sp
-                )
-
-                Text(
-                    text = "Discover something new each day.",
-                    color = LeafGreen,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
             }
         }
+    }
+}
+
+@Composable
+internal fun PhotoCredit(photo: LearnPhoto) {
+    val uriHandler = LocalUriHandler.current
+    var showCredit by remember(photo.id) { mutableStateOf(false) }
+    TextButton(onClick = { showCredit = true }, contentPadding = PaddingValues(0.dp)) {
+        Text("Photo credit", color = Turquoise, fontSize = 11.sp)
+    }
+    if (showCredit) {
+        AlertDialog(
+            onDismissRequest = { showCredit = false }, containerColor = Color.White,
+            title = { Text("Photo credit", color = LearnText) },
+            text = { Column {
+                Text(photo.attribution, color = LearnText)
+                Text("License: ${photo.license}", color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
+                Text("Display: cropped to fit.", color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
+            } },
+            dismissButton = { TextButton(onClick = { runCatching { uriHandler.openUri(photo.pageUrl) } }) {
+                Text("View source", color = Turquoise)
+            } },
+            confirmButton = { TextButton(onClick = { showCredit = false }) { Text("Close", color = Turquoise) } },
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LearnFilters(
-    sort: LearnSort,
-    region: LearnRegion,
-    group: LearnGroup,
-    onDismiss: () -> Unit,
-    onApply: (LearnSort, LearnRegion, LearnGroup) -> Unit
-) {
-    // Changes stay here until Apply is pressed.
+private fun LearnFilters(sort: LearnSort, region: LearnRegion, group: LearnGroup, onDismiss: () -> Unit,
+                         onApply: (LearnSort, LearnRegion, LearnGroup) -> Unit) {
     var draftSort by rememberSaveable { mutableStateOf(sort) }
     var draftRegion by rememberSaveable { mutableStateOf(region) }
     var draftGroup by rememberSaveable { mutableStateOf(group) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = Color.White
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Filter species",
-                color = LearnText,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            FilterMenu(
-                title = "Sort by",
-                choices = LearnSort.entries.map { it.label },
-                selected = draftSort.ordinal
-            ) {
-                draftSort = LearnSort.entries[it]
-            }
-
-            FilterMenu(
-                title = "Region",
-                choices = LearnRegion.entries.map { it.label },
-                selected = draftRegion.ordinal
-            ) {
-                draftRegion = LearnRegion.entries[it]
-            }
-
-            FilterMenu(
-                title = "Species group",
-                choices = LearnGroup.entries.map { it.label },
-                selected = draftGroup.ordinal
-            ) {
-                draftGroup = LearnGroup.entries[it]
-            }
-
-            Text(
-                text = "Region filters use sample tags for now.",
-                color = Color.DarkGray,
-                fontSize = 12.sp
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(
-                    onClick = {
-                        draftSort = LearnSort.AZ
-                        draftRegion = LearnRegion.ALL
-                        draftGroup = LearnGroup.ALL
-                    }
-                ) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)
+            .padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Filter species", color = LearnText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            FilterMenu("Sort by", LearnSort.entries.map { it.label }, draftSort.ordinal) { draftSort = LearnSort.entries[it] }
+            FilterMenu("Region", LearnRegion.entries.map { it.label }, draftRegion.ordinal) { draftRegion = LearnRegion.entries[it] }
+            FilterMenu("Species group", LearnGroup.entries.map { it.label }, draftGroup.ordinal) { draftGroup = LearnGroup.entries[it] }
+            Text("A–Z and Z–A sort the species loaded so far. Region and group filters use iNaturalist observation records.",
+                color = Color.DarkGray, fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { draftSort = LearnSort.AZ; draftRegion = LearnRegion.ALL; draftGroup = LearnGroup.ALL }) {
                     Text("Reset", color = Turquoise)
                 }
-
-                Button(
-                    onClick = {
-                        onApply(draftSort, draftRegion, draftGroup)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Turquoise
-                    )
-                ) {
-                    Text("Apply", color = Color.White)
-                }
+                Button(onClick = { onApply(draftSort, draftRegion, draftGroup) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Turquoise)) { Text("Apply", color = Color.White) }
             }
         }
     }
 }
 
 @Composable
-private fun FilterMenu(
-    title: String,
-    choices: List<String>,
-    selected: Int,
-    onSelect: (Int) -> Unit
-) {
+private fun FilterMenu(title: String, choices: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
-
     Column {
-        Text(
-            text = title,
-            color = LearnText,
-            fontWeight = FontWeight.SemiBold
-        )
-
+        Text(title, color = LearnText, fontWeight = FontWeight.SemiBold)
         Box {
-            OutlinedButton(
-                onClick = { open = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(choices[selected], color = Turquoise)
-            }
-
-            DropdownMenu(
-                expanded = open,
-                onDismissRequest = { open = false }
-            ) {
+            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) { Text(choices[selected], color = Turquoise) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 choices.forEachIndexed { index, label ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        onClick = {
-                            onSelect(index)
-                            open = false
-                        }
-                    )
+                    DropdownMenuItem(text = { Text(label) }, onClick = { onSelect(index); open = false })
                 }
             }
         }

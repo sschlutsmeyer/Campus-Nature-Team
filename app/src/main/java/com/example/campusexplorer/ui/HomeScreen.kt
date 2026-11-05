@@ -64,6 +64,12 @@ enum class Feature(
         emoji = "🖼️",
         subtitle = "Browse your nature photos",
         keywords = listOf("photos", "pictures")
+    ),
+    Learn(
+    title = "Learn",
+    emoji = "📚",
+    subtitle = "Discover plants and wildlife",
+    keywords = listOf("species", "plants", "animals", "wildlife", "learn")
     )
 }
 

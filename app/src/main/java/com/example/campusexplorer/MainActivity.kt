@@ -32,9 +32,11 @@ import com.example.campusexplorer.ui.camera.CameraScreen
 import com.example.campusexplorer.ui.feed.FeedScreen
 import com.example.campusexplorer.ui.gallery.GalleryScreen
 import com.example.campusexplorer.ui.map.MapScreen
+import com.example.campusexplorer.ui.learn.LearnScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
+
 
 // Switches between the Nature Quest design (true) and the plain tab bar layout (false).
 private const val USE_NATURE_QUEST_UI = true
@@ -194,6 +196,9 @@ fun CampusExplorerApp() {
                         composePhotoId = feedComposePhotoId,
                         onComposeHandled = { feedComposePhotoId = null },
                         onViewOnMap = viewOnMap,
+                    )
+                    Feature.Learn -> LearnScreen(
+                        modifier = Modifier.fillMaxSize()
                     )
                     else -> FeaturePlaceholder(feature)
                 }

@@ -111,6 +111,17 @@ object PostRepository {
         awaitClose { registration.remove() }
     }
 
+    fun observeBookmarkedPosts(): Flow<List<FeedPost>> = callbackFlow {
+        val uid = PhotoRepository.ensureSignedIn()
+        val registration = posts
+            .whereArrayContains("bookmarkedBy", uid) // <--- THIS IS THE MAGIC FILTER
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                // ... same listener logic as your observePosts() function ...
+            }
+        // ...
+    }
+
     // Live view of one post, or null if it doesn't exist (or was deleted).
     fun observePost(postId: String): Flow<FeedPost?> = callbackFlow {
         PhotoRepository.ensureSignedIn()
@@ -333,6 +344,7 @@ object PostRepository {
             photoTakenAt = doc.getTimestamp("photoTakenAt")?.toDate(),
             likedBy = doc.stringSet("likedBy"),
             dislikedBy = doc.stringSet("dislikedBy"),
+            bookmarkedBy = doc.stringSet("bookmarkedBy").toList(),
             commentCount = (doc.getLong("commentCount") ?: 0L).toInt().coerceAtLeast(0),
         )
     }

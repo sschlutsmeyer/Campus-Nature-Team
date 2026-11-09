@@ -246,9 +246,10 @@ fun FeedScreen(
                         onBookmark = {
                             scope.launch {
                                 try {
+                                    android.util.Log.d("AUTH_TEST", "Current user ID: ${com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid}")
                                     PostRepository.toggleBookmark(post)
                                 } catch (e: Exception) {
-                                    onMessage(userMessage(e, "Could not update bookmark"))
+                                    onMessage(userMessage(e, fallback = "Could not update bookmark"))
                                 }
                             }
                         },

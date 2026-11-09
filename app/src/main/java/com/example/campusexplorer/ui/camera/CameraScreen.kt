@@ -52,7 +52,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.campusexplorer.data.CameraRoll
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.LocationHelper
 import com.example.campusexplorer.data.PhotoRepository
@@ -65,6 +67,10 @@ import kotlinx.coroutines.withContext
 
 // Label for this file's messages in Logcat.
 private const val TAG = "CameraScreen"
+
+// Where the "Save to camera roll" choice is remembered.
+private const val PREFS = "camera"
+private const val PREF_CAMERA_ROLL = "save_to_camera_roll"
 
 // The Camera tab: asks for permission, shows the camera, then the review screen.
 @Composable
@@ -241,6 +247,22 @@ private fun PhotoReview(
     // Whether to also keep a copy of the photo on this phone.
     var keepLocalCopy by remember { mutableStateOf(true) }
 
+    // Whether to also add the photo to the phone's camera roll. Remembered for next time.
+    val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var saveToCameraRoll by remember { mutableStateOf(prefs.getBoolean(PREF_CAMERA_ROLL, false)) }
+    val setSaveToCameraRoll = { on: Boolean ->
+        saveToCameraRoll = on
+        prefs.edit { putBoolean(PREF_CAMERA_ROLL, on) }
+    }
+
+    // Android 9 and older need storage permission for the camera roll. Untick the box if refused.
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> setSaveToCameraRoll(granted) }
+
+    // Set once it's in the camera roll, so retrying a failed upload doesn't add it twice.
+    var savedToCameraRoll by remember { mutableStateOf(false) }
+
     // True while saving. Disables the buttons and shows a spinner.
     var saving by remember { mutableStateOf(false) }
 
@@ -283,6 +305,26 @@ private fun PhotoReview(
             Text("Also save a copy on this phone", modifier = Modifier.padding(start = 8.dp))
         }
 
+        // Ask whether to add it to the phone's camera roll (Pictures/Nature Quest).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.toggleable(
+                value = saveToCameraRoll,
+                enabled = !saving,
+                role = Role.Checkbox,
+                onValueChange = { on ->
+                    if (on && CameraRoll.needsWritePermission(context)) {
+                        writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        setSaveToCameraRoll(on)
+                    }
+                },
+            ),
+        ) {
+            Checkbox(checked = saveToCameraRoll, onCheckedChange = null, enabled = !saving)
+            Text("Save to camera roll", modifier = Modifier.padding(start = 8.dp))
+        }
+
         // Buttons side by side.
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
 
@@ -300,6 +342,19 @@ private fun PhotoReview(
 
                             // Current location, or null if unavailable.
                             val location = LocationHelper.currentLocation(context)
+
+                            // Add it to the camera roll first, so it's kept even if the upload fails.
+                            if (saveToCameraRoll && !savedToCameraRoll) {
+                                try {
+                                    CameraRoll.save(context, jpeg, location)
+                                    savedToCameraRoll = true
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Couldn't save to camera roll", e)
+                                    onMessage("Couldn't save to the camera roll: ${e.message}")
+                                }
+                            }
 
                             // Upload the photo with its caption and location.
                             val photoId = PhotoRepository.save(jpeg, caption.trim(), location)

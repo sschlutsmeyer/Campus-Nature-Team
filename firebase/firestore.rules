@@ -68,6 +68,16 @@ service cloud.firestore {
           && !(me in newLikes && me in newDislikes);
       }
 
+      // Anyone can bookmark or unbookmark a post, adding or removing only their own entry.
+      // Older posts have no bookmarkedBy list yet, so treat a missing one as empty.
+      function isBookmarkChange() {
+        let me = request.auth.uid;
+        let oldMarks = resource.data.get('bookmarkedBy', []).toSet();
+        let newMarks = request.resource.data.get('bookmarkedBy', []).toSet();
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bookmarkedBy'])
+          && newMarks.difference(oldMarks).union(oldMarks.difference(newMarks)).hasOnly([me]);
+      }
+
       // Adding or deleting a comment moves the count by exactly one.
       function isCommentCountChange() {
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
@@ -93,7 +103,7 @@ service cloud.firestore {
           || (request.resource.data.photoId == postId
             && get(/databases/$(database)/documents/photos/$(postId)).data.uid == request.auth.uid));
 
-      allow update: if signedIn() && (isOwnerEdit() || isReactionChange() || isCommentCountChange());
+      allow update: if signedIn() && (isOwnerEdit() || isReactionChange() || isBookmarkChange() || isCommentCountChange());
 
       // Only the author can delete a post.
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;

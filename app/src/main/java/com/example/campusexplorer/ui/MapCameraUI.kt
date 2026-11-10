@@ -42,7 +42,6 @@ internal val CampusRed = Color(0xFFC6323A)
 internal val LeafGreen = Color(0xFF427A46)
 internal val Cream = Color(0xFFF7F8F2)
 internal val LightGreen = Color(0xFFE8F3EC)
-
 // Navigation icons require no additional icon dependencies.
 private val BackIcon: ImageVector = ImageVector.Builder(
     name = "Back",

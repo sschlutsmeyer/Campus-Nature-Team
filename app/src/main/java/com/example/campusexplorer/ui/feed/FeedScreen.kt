@@ -242,7 +242,17 @@ fun FeedScreen(
                         onExpandedChange = { open ->
                             expandedIds = if (open) expandedIds + post.id else expandedIds - post.id
                         },
-                        onReact = { react(post, it) },
+                        onReact = { react(post, reaction = it) },
+                        onBookmark = {
+                            scope.launch {
+                                try {
+                                    android.util.Log.d("AUTH_TEST", "Current user ID: ${com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid}")
+                                    PostRepository.toggleBookmark(post)
+                                } catch (e: Exception) {
+                                    onMessage(userMessage(e, fallback = "Could not update bookmark"))
+                                }
+                            }
+                        },
                         onMessage = onMessage,
                         onEdit = { editingPost = post },
                         onDelete = { deletingPost = post },
@@ -369,6 +379,7 @@ fun FeedPostCard(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onReact: (Reaction) -> Unit,
+    onBookmark: () -> Unit,
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 
@@ -379,6 +390,7 @@ fun FeedPostCard(
     // Null hides the Map button (text posts and photos without a location).
     onViewOnMap: (() -> Unit)? = null,
 ) {
+    val isBookmarked = myUid != null && myUid in post.bookmarkedBy
     val isMine = myUid != null && post.uid == myUid
     val myReaction = when {
         myUid == null -> Reaction.NONE
@@ -449,6 +461,15 @@ fun FeedPostCard(
                     onExpandedChange(true)
                     focusCommentBox = true
                 },
+            )
+            FeedAction(
+                icon = if (isBookmarked) BookmarkFilledIcon else BookmarkOutlineIcon,
+                text = "",
+                description = "Bookmark",
+                tint = if (isBookmarked) Turquoise else FeedMuted,
+                selected = isBookmarked,
+                enabled = true,
+                onClick = onBookmark
             )
             Spacer(Modifier.weight(1f))
             if (onViewOnMap != null) {

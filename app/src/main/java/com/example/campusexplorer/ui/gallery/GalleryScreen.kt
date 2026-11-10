@@ -28,12 +28,22 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import com.example.campusexplorer.ui.feed.FeedPostCard
+import com.example.campusexplorer.data.FeedPost
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
+import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.ui.LeafGreen
 import com.example.campusexplorer.ui.LightGreen
+import com.example.campusexplorer.ui.PhotoImportHost
 import com.example.campusexplorer.ui.Turquoise
+import com.example.campusexplorer.ui.feed.FeedMuted
+import com.example.campusexplorer.ui.feed.userMessage
+import kotlinx.coroutines.launch
+import com.example.campusexplorer.ui.feed.FeedPostCard
 import com.example.campusexplorer.ui.map.PhotoDetailsDialog
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
@@ -58,6 +68,7 @@ fun GalleryScreen(
     var uid by remember { mutableStateOf(auth.currentUser?.uid) }
     var signInError by remember { mutableStateOf(false) }
     var signInRetry by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     DisposableEffect(auth) {
         val listener = FirebaseAuth.AuthStateListener { uid = it.currentUser?.uid }
@@ -105,6 +116,7 @@ private fun UserGallery(
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(uid, retry, lifecycle) {
@@ -140,52 +152,105 @@ private fun UserGallery(
         if (!loading && photos.none { it.id == selectedId }) selectedId = null
     }
 
-    Column(modifier.fillMaxSize().background(Color.White).padding(12.dp)) {
-        GalleryHeader(if (loading || failed) null else photos.size)
-        when {
-            failed -> GalleryStatus(
-                Modifier.weight(1f), "Couldn't load your photos. Check your connection and try again.",
-                onRetry = { retry++ },
+    Column(modifier.fillMaxSize().background(Color.White).padding(all = 12.dp)) {
+        // 1. Tab Bar at the top
+        PrimaryTabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = Color.White,
+            contentColor = Turquoise
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("My Photos") }
             )
-            loading -> GalleryStatus(Modifier.weight(1f))
-            photos.isEmpty() -> Column(
-                Modifier.fillMaxWidth().weight(1f).padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text("Your discoveries start here", color = LeafGreen, fontWeight = FontWeight.SemiBold,
-                    fontSize = 19.sp, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(10.dp))
-                Text("Take and save a photo with the camera. Your photos will appear here.",
-                    color = Color.DarkGray, textAlign = TextAlign.Center)
-            }
-            else -> {
-                // Group by local calendar date, with a separate heading for undated photos.
-                val groups = photos.groupBy { it.createdAt?.let(::dayKey) }
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                ) {
-                    groups.forEach { (day, dailyPhotos) ->
-                        item(key = "day:$day", span = { GridItemSpan(maxLineSpan) }) {
-                            DateHeading(dailyPhotos.first().createdAt)
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("Bookmarks") }
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 2. Tab Content Switching
+        if (selectedTab == 0) {
+            PhotoImportHost(onMessage = onMessage) { startImport ->
+                Column(modifier.fillMaxSize().background(Color.White).padding(12.dp)) {
+                    GalleryHeader(if (loading || failed) null else photos.size, onAddPhoto = startImport)
+                    when {
+                        failed -> GalleryStatus(
+                            Modifier.weight(1f),
+                            "Couldn't load your photos. Check your connection and try again.",
+                            onRetry = { retry++ },
+                        )
+
+                        loading -> GalleryStatus(Modifier.weight(1f))
+                        photos.isEmpty() -> Column(
+                            Modifier.fillMaxWidth().weight(1f).padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                "Your discoveries start here",
+                                color = LeafGreen,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 19.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "Take a photo with the camera, or tap Add Photo to bring one in from your camera roll. Your photos will appear here.",
+                                color = Color.DarkGray, textAlign = TextAlign.Center
+                            )
                         }
-                        items(dailyPhotos, key = { "photo:${it.id}" }) { photo ->
-                            PhotoThumbnail(photo, onClick = { selectedId = photo.id })
+
+                        else -> {
+                            // Group by local calendar date, with a separate heading for undated photos.
+                            val groups = photos.groupBy { it.createdAt?.let(::dayKey) }
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                contentPadding = PaddingValues(bottom = 12.dp),
+                            ) {
+                                groups.forEach { (day, dailyPhotos) ->
+                                    item(key = "day:$day", span = { GridItemSpan(maxLineSpan) }) {
+                                        DateHeading(dailyPhotos.first().createdAt)
+                                    }
+                                    items(dailyPhotos, key = { "photo:${it.id}" }) { photo ->
+                                        PhotoThumbnail(photo, onClick = { selectedId = photo.id })
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+        } else {
+            BookmarkedPostsTab(
+                uid = uid,
+                onMessage = onMessage,
+                onViewPost = onViewPost
+            )
         }
     }
 }
 
 @Composable
-private fun GalleryHeader(count: Int?) {
-    Text("My Photos", color = Color(0xFF294C39), fontSize = 30.sp, fontWeight = FontWeight.Bold)
+private fun GalleryHeader(count: Int?, onAddPhoto: (() -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("My Photos", color = Color(0xFF294C39), fontSize = 30.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f))
+
+        // Bring in a photo from the phone's camera roll.
+        if (onAddPhoto != null) {
+            Button(onClick = onAddPhoto, colors = ButtonDefaults.buttonColors(containerColor = Turquoise)) {
+                Text("Add Photo")
+            }
+        }
+    }
     if (count != null) {
         Text("$count ${if (count == 1) "photo" else "photos"}", color = Color.DarkGray, fontSize = 13.sp)
     }
@@ -203,6 +268,85 @@ private fun GalleryStatus(modifier: Modifier, message: String? = null, onRetry: 
         } else {
             Text(message, color = Color.DarkGray, textAlign = TextAlign.Center)
             TextButton(onClick = onRetry) { Text("Try again", color = Turquoise) }
+        }
+    }
+}
+
+@Composable
+private fun BookmarkedPostsTab(
+    uid: String,
+    onMessage: (String) -> Unit,
+    onViewPost: ((postId: String) -> Unit)? = null
+) {
+    var bookmarkedPosts by remember { mutableStateOf<List<FeedPost>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    // Posts showing their full description and comments ("Show more"), like in the feed.
+    var expandedIds by remember { mutableStateOf(emptySet<String>()) }
+
+    LaunchedEffect(uid) {
+        // Collects posts where your uid is inside bookmarkedBy
+        try {
+            PostRepository.observePosts().collect { allPosts ->
+                bookmarkedPosts = allPosts.filter { uid in it.bookmarkedBy }
+                loading = false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("GalleryScreen", "Couldn't load bookmarks", e)
+            onMessage(userMessage(e, "Couldn't load your bookmarks."))
+            loading = false
+        }
+    }
+
+    // Like/dislike/undo and bookmark/unbookmark, the same as in the feed. The list updates on its own.
+    fun runAction(fallback: String, action: suspend () -> Unit) {
+        scope.launch {
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("GalleryScreen", fallback, e)
+                onMessage(userMessage(e, fallback))
+            }
+        }
+    }
+
+    if (loading) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Turquoise)
+        }
+    } else if (bookmarkedPosts.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No bookmarked posts yet", color = FeedMuted)
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(bookmarkedPosts, key = { it.id }) { post ->
+                FeedPostCard(
+                    post = post,
+                    myUid = uid,
+                    expanded = post.id in expandedIds,
+                    onExpandedChange = { open ->
+                        expandedIds = if (open) expandedIds + post.id else expandedIds - post.id
+                    },
+                    onReact = { reaction ->
+                        runAction("Couldn't save your reaction.") { PostRepository.setReaction(post, reaction) }
+                    },
+
+                    // Unbookmarking removes the post from this list.
+                    onBookmark = {
+                        runAction("Couldn't update the bookmark.") { PostRepository.toggleBookmark(post) }
+                    },
+                    onMessage = onMessage
+                )
+            }
         }
     }
 }

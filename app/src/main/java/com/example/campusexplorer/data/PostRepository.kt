@@ -41,6 +41,7 @@ data class FeedPost(
     val photoTakenAt: Date?,
 
     // The ids of the users who liked and disliked it. A user can be in at most one.
+    val bookmarkedBy: List<String> = emptyList(),
     val likedBy: Set<String>,
     val dislikedBy: Set<String>,
     val commentCount: Int,
@@ -108,6 +109,17 @@ object PostRepository {
 
         // Stop listening when nobody needs the list anymore.
         awaitClose { registration.remove() }
+    }
+
+    fun observeBookmarkedPosts(): Flow<List<FeedPost>> = callbackFlow {
+        val uid = PhotoRepository.ensureSignedIn()
+        val registration = posts
+            .whereArrayContains("bookmarkedBy", uid) // <--- THIS IS THE MAGIC FILTER
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                // ... same listener logic as your observePosts() function ...
+            }
+        // ...
     }
 
     // Live view of one post, or null if it doesn't exist (or was deleted).
@@ -196,6 +208,18 @@ object PostRepository {
             Reaction.NONE -> FieldValue.arrayRemove(uid) to FieldValue.arrayRemove(uid)
         }
         posts.document(post.id).update("likedBy", likes, "dislikedBy", dislikes).await()
+    }
+
+    // Bookmarks or unbookmarks a post for the signed-in user.
+    suspend fun toggleBookmark(post: FeedPost) {
+        val uid = PhotoRepository.ensureSignedIn()
+        val isBookmarked = uid in post.bookmarkedBy
+        val update = if (isBookmarked) {
+            FieldValue.arrayRemove(uid)
+        } else {
+            FieldValue.arrayUnion(uid)
+        }
+        posts.document(post.id).update("bookmarkedBy", update).await()
     }
 
     // Live list of a post's comments, oldest first.
@@ -320,6 +344,7 @@ object PostRepository {
             photoTakenAt = doc.getTimestamp("photoTakenAt")?.toDate(),
             likedBy = doc.stringSet("likedBy"),
             dislikedBy = doc.stringSet("dislikedBy"),
+            bookmarkedBy = doc.stringSet("bookmarkedBy").toList(),
             commentCount = (doc.getLong("commentCount") ?: 0L).toInt().coerceAtLeast(0),
         )
     }

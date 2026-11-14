@@ -7,7 +7,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.campusexplorer.data.INaturalistRepository
@@ -42,7 +41,6 @@ internal fun SpeciesQuickFacts(species: LearnSpecies) {
     }
 
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
-        Text("Quick facts", color = LearnText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
         when {
             loading -> CircularProgressIndicator(color = Turquoise,
                 modifier = Modifier.padding(top = 8.dp).size(18.dp), strokeWidth = 2.dp)

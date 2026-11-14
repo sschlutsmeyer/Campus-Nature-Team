@@ -1,5 +1,6 @@
 package com.example.campusexplorer.ui.learn
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -7,11 +8,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,22 +40,37 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
 
 internal val LearnText = Color(0xFF294C39)
 
 @Composable
 fun LearnScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current.applicationContext
+    val filterPreferences = remember(context) {
+        context.getSharedPreferences("LearnFilterPreferences", Context.MODE_PRIVATE)
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     var expanded by rememberSaveable { mutableStateOf(true) }
-    var sort by rememberSaveable { mutableStateOf(LearnSort.AZ) }
-    var region by rememberSaveable { mutableStateOf(LearnRegion.ALL) }
-    var group by rememberSaveable { mutableStateOf(LearnGroup.ALL) }
+    var sort by rememberSaveable {
+        mutableStateOf(LearnSort.entries.firstOrNull {
+            it.name == filterPreferences.getString("sort", null)
+        } ?: LearnSort.AZ)
+    }
+    var placeId by rememberSaveable {
+        mutableStateOf(filterPreferences.getLong("place_id", 0L).takeIf { it > 0 })
+    }
+    var placeName by rememberSaveable {
+        mutableStateOf(filterPreferences.getString("place_name", "").orEmpty())
+    }
+    var group by rememberSaveable {
+        mutableStateOf(LearnGroup.entries.firstOrNull {
+            it.name == filterPreferences.getString("group", null)
+        } ?: LearnGroup.ALL)
+    }
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var retry by remember { mutableIntStateOf(0) }
@@ -100,7 +114,7 @@ fun LearnScreen(modifier: Modifier = Modifier) {
     }
 
     // Cancelling the effect prevents older searches from replacing newer results.
-    LaunchedEffect(query, region, group, retry) {
+    LaunchedEffect(query, placeId, group, retry) {
         moreJob?.cancel()
         generation++
         loadingMore = false
@@ -113,7 +127,7 @@ fun LearnScreen(modifier: Modifier = Modifier) {
         listState.scrollToItem(0)
         try {
             if (query.isNotBlank()) delay(500)
-            val result = INaturalistRepository.search(query, region, group)
+            val result = INaturalistRepository.search(query, LearnRegion.ALL, group, placeId = placeId)
             rows = result.species
             total = result.total
             hasMore = result.hasMore
@@ -132,13 +146,14 @@ fun LearnScreen(modifier: Modifier = Modifier) {
         val requestGeneration = generation
         val nextPage = page + 1
         val search = query
-        val requestRegion = region
+        val requestPlaceId = placeId
         val requestGroup = group
         loadingMore = true
         error = null
         moreJob = scope.launch {
             try {
-                val result = INaturalistRepository.search(search, requestRegion, requestGroup, nextPage)
+                val result = INaturalistRepository.search(search, LearnRegion.ALL, requestGroup, nextPage,
+                    placeId = requestPlaceId)
                 if (generation == requestGeneration) {
                     rows = (rows + result.species).distinctBy { it.id }
                     total = result.total
@@ -156,7 +171,6 @@ fun LearnScreen(modifier: Modifier = Modifier) {
     }
 
     val sorted = remember(rows, sort) { sortLearnSpecies(rows, sort) }
-    val formattedTotal = NumberFormat.getIntegerInstance().format(total)
     Column(modifier.fillMaxSize().background(Color.White).padding(12.dp)) {
         Text("Learn", color = LearnText, fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Text("Explore the natural world", color = Turquoise, fontSize = 14.sp)
@@ -183,17 +197,7 @@ fun LearnScreen(modifier: Modifier = Modifier) {
                         Text("Filters", color = Turquoise)
                     }
                 }
-                Text("${sort.label} · ${region.label} · ${group.label}", color = Color.DarkGray, fontSize = 12.sp)
-                if (!loading) {
-                    Text("${rows.size} loaded · $formattedTotal matches", color = Color.DarkGray, fontSize = 11.sp)
-                }
-                Text("Alphabetical order applies to loaded species. Load more or search to narrow the list.",
-                    color = Color.DarkGray, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                if (region != LearnRegion.ALL || group != LearnGroup.ALL) {
-                    Text(if (region == LearnRegion.CAMPUS) "Recorded within 5 km of CSU Channel Islands."
-                    else "Species with verifiable iNaturalist observations matching these filters.",
-                        color = LeafGreen, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                }
+
             }
             if (loading) {
                 item(key = "loading") { LoadingSpecies() }
@@ -253,11 +257,23 @@ fun LearnScreen(modifier: Modifier = Modifier) {
                 focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
     }
     if (showFilters) {
-        LearnFilters(sort, region, group, onDismiss = { showFilters = false },
-            onApply = { newSort, newRegion, newGroup ->
+        LearnFilters(sort, placeId, placeName, group, onDismiss = { showFilters = false },
+            onApply = { newSort, newPlaceId, newPlaceName, newGroup ->
                 sort = newSort
-                region = newRegion
+                placeId = newPlaceId
+                placeName = newPlaceName
                 group = newGroup
+                // Persist only confirmed choices, so dismissing a draft does not save it.
+                val editor = filterPreferences.edit()
+                    .putString("sort", newSort.name)
+                    .putString("group", newGroup.name)
+                if (newPlaceId == null) {
+                    editor.remove("place_id").remove("place_name")
+                } else {
+                    editor.putLong("place_id", newPlaceId)
+                        .putString("place_name", newPlaceName)
+                }
+                editor.apply()
                 showFilters = false
             })
     }
@@ -333,45 +349,3 @@ internal fun PhotoCredit(photo: LearnPhoto) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun LearnFilters(sort: LearnSort, region: LearnRegion, group: LearnGroup, onDismiss: () -> Unit,
-                         onApply: (LearnSort, LearnRegion, LearnGroup) -> Unit) {
-    var draftSort by rememberSaveable { mutableStateOf(sort) }
-    var draftRegion by rememberSaveable { mutableStateOf(region) }
-    var draftGroup by rememberSaveable { mutableStateOf(group) }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)
-            .padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Filter species", color = LearnText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            FilterMenu("Sort by", LearnSort.entries.map { it.label }, draftSort.ordinal) { draftSort = LearnSort.entries[it] }
-            FilterMenu("Region", LearnRegion.entries.map { it.label }, draftRegion.ordinal) { draftRegion = LearnRegion.entries[it] }
-            FilterMenu("Species group", LearnGroup.entries.map { it.label }, draftGroup.ordinal) { draftGroup = LearnGroup.entries[it] }
-            Text("A–Z and Z–A sort the species loaded so far. Region and group filters use iNaturalist observation records.",
-                color = Color.DarkGray, fontSize = 12.sp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { draftSort = LearnSort.AZ; draftRegion = LearnRegion.ALL; draftGroup = LearnGroup.ALL }) {
-                    Text("Reset", color = Turquoise)
-                }
-                Button(onClick = { onApply(draftSort, draftRegion, draftGroup) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Turquoise)) { Text("Apply", color = Color.White) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilterMenu(title: String, choices: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Column {
-        Text(title, color = LearnText, fontWeight = FontWeight.SemiBold)
-        Box {
-            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) { Text(choices[selected], color = Turquoise) }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                choices.forEachIndexed { index, label ->
-                    DropdownMenuItem(text = { Text(label) }, onClick = { onSelect(index); open = false })
-                }
-            }
-        }
-    }
-}

@@ -1,143 +1,57 @@
 package com.example.campusexplorer.data
 
-import android.content.Context
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import kotlin.random.Random
+import java.text.Collator
 
 enum class LearnSort(val label: String) {
-    AZ("Name A–Z"),
-    ZA("Name Z–A")
+    AZ("Name A–Z"), ZA("Name Z–A")
 }
 
 enum class LearnRegion(val label: String) {
-    ALL("All regions"),
-    CALIFORNIA("California"),
-    CAMPUS("Around campus")
+    ALL("All regions"), CALIFORNIA("California"), CAMPUS("Around campus (5 km)")
 }
 
-enum class LearnGroup(val label: String) {
-    ALL("All groups"),
-    BIRDS("Birds"),
-    PLANTS("Plants"),
-    MAMMALS("Mammals"),
-    INSECTS("Insects"),
-    REPTILES("Reptiles")
+enum class LearnGroup(val label: String, val iconicTaxon: String?) {
+    ALL("All groups", null), BIRDS("Birds", "Aves"), PLANTS("Plants", "Plantae"),
+    MAMMALS("Mammals", "Mammalia"), INSECTS("Insects", "Insecta"), REPTILES("Reptiles", "Reptilia"),
+    FUNGI("Fungi", "Fungi"), AMPHIBIANS("Amphibians", "Amphibia")
+}
+
+data class LearnPhoto(
+    val id: Long,
+    val thumbnailUrl: String,
+    val imageUrl: String,
+    val attribution: String,
+    val license: String,
+) {
+    val pageUrl: String get() = "https://www.inaturalist.org/photos/$id"
 }
 
 data class LearnSpecies(
-    val id: String,
+    val id: Long,
     val name: String,
     val scientificName: String,
-    val illustration: String,
-    val group: LearnGroup,
-    val sampleRegions: Set<LearnRegion>,
-)
+    val groupName: String,
+    val rank: String,
+    val observationsCount: Long,
+    val photo: LearnPhoto?,
+    val descriptionHtml: String?,
+    val wikipediaUrl: String?,
+    val classification: List<String>,
+) {
+    val pageUrl: String get() = "https://www.inaturalist.org/taxa/$id"
+}
 
-// Demonstration entries and region tags, not verified campus observations.
-object LearnSampleData {
-    private val local = setOf(
-        LearnRegion.CALIFORNIA,
-        LearnRegion.CAMPUS
-    )
+// A searchable iNaturalist place; displayName includes its geographic context.
+data class LearnPlace(val id: Long, val displayName: String)
 
-    private val california = setOf(LearnRegion.CALIFORNIA)
+data class LearnPage(val species: List<LearnSpecies>, val total: Long, val hasMore: Boolean)
 
-    val species = listOf(
-        LearnSpecies(
-            "acorn",
-            "Acorn Woodpecker",
-            "Melanerpes formicivorus",
-            "🐦",
-            LearnGroup.BIRDS,
-            california
-        ),
-        LearnSpecies(
-            "crow",
-            "American Crow",
-            "Corvus brachyrhynchos",
-            "🐦",
-            LearnGroup.BIRDS,
-            local
-        ),
-        LearnSpecies(
-            "hummingbird",
-            "Anna’s Hummingbird",
-            "Calypte anna",
-            "🐦",
-            LearnGroup.BIRDS,
-            local
-        ),
-        LearnSpecies(
-            "poppy",
-            "California Poppy",
-            "Eschscholzia californica",
-            "🌼",
-            LearnGroup.PLANTS,
-            local
-        ),
-        LearnSpecies(
-            "coyote",
-            "Coyote",
-            "Canis latrans",
-            "🐺",
-            LearnGroup.MAMMALS,
-            local
-        ),
-        LearnSpecies(
-            "panda",
-            "Giant Panda",
-            "Ailuropoda melanoleuca",
-            "🐼",
-            LearnGroup.MAMMALS,
-            emptySet()
-        ),
-        LearnSpecies(
-            "monarch",
-            "Monarch",
-            "Danaus plexippus",
-            "🦋",
-            LearnGroup.INSECTS,
-            california
-        ),
-        LearnSpecies(
-            "lizard",
-            "Western Fence Lizard",
-            "Sceloporus occidentalis",
-            "🦎",
-            LearnGroup.REPTILES,
-            local
-        ),
-    )
-
-    // Save the random choice so it stays the same throughout the day.
-    fun dailySpecies(context: Context): LearnSpecies {
-        val preferences = context.getSharedPreferences(
-            "LearnDailySpecies",
-            Context.MODE_PRIVATE
-        )
-
-        val today = SimpleDateFormat(
-            "yyyy-MM-dd",
-            Locale.US
-        ).format(Date())
-
-        val saved = species.firstOrNull {
-            it.id == preferences.getString("speciesId", null)
-        }
-
-        if (preferences.getString("date", null) == today && saved != null) {
-            return saved
-        }
-
-        val chosen = species[Random.nextInt(species.size)]
-
-        preferences.edit()
-            .putString("date", today)
-            .putString("speciesId", chosen.id)
-            .apply()
-
-        return chosen
-    }
+// Order the whole set currently loaded, with a stable tie-breaker for matching names.
+fun sortLearnSpecies(species: List<LearnSpecies>, sort: LearnSort): List<LearnSpecies> {
+    val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }
+    val ordered = species.distinctBy { it.id }.sortedWith(Comparator { a, b ->
+        val names = collator.compare(a.name, b.name)
+        if (names == 0) a.id.compareTo(b.id) else names
+    })
+    return if (sort == LearnSort.ZA) ordered.reversed() else ordered
 }

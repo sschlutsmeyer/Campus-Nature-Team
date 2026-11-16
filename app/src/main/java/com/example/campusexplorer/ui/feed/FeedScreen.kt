@@ -1,6 +1,8 @@
 package com.example.campusexplorer.ui.feed
 
 import android.util.Log
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +71,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import com.example.campusexplorer.data.POST_CATEGORIES
 import com.example.campusexplorer.data.COMMENT_MAX
 import com.example.campusexplorer.data.FeedPost
 import com.example.campusexplorer.data.PhotoRepository
@@ -138,6 +145,36 @@ fun FeedScreen(
     var editingPost by remember { mutableStateOf<FeedPost?>(null) }
     var deletingPost by remember { mutableStateOf<FeedPost?>(null) }
     var deleteInProgress by remember { mutableStateOf(false) }
+
+    // Filter states for Issue #27 (Category, Date range / sort, and My Posts)
+    var selectedCategory by rememberSaveable { mutableStateOf("All") }
+    var selectedDateFilter by rememberSaveable { mutableStateOf("Newest") } // "Newest", "Oldest", "Today", "This Week"
+    var showOnlyMine by rememberSaveable { mutableStateOf(false) }
+
+    val filteredPosts = remember(posts, selectedCategory, selectedDateFilter, showOnlyMine, myUid) {
+        val now = System.currentTimeMillis()
+        val oneDayMs = 24 * 60 * 60 * 1000L
+        val oneWeekMs = 7 * oneDayMs
+
+        posts.filter { post ->
+            val matchesCategory = selectedCategory == "All" ||
+                    post.category.equals(selectedCategory, ignoreCase = true)
+            val matchesOwner = !showOnlyMine || (myUid != null && post.uid == myUid)
+            val postTime = (post.photoTakenAt ?: post.createdAt)?.time ?: 0L
+            val matchesDate = when (selectedDateFilter) {
+                "Today" -> (now - postTime) <= oneDayMs
+                "This Week" -> (now - postTime) <= oneWeekMs
+                else -> true
+            }
+            matchesCategory && matchesOwner && matchesDate
+        }.let { list ->
+            if (selectedDateFilter == "Oldest") {
+                list.sortedBy { (it.photoTakenAt ?: it.createdAt)?.time ?: Long.MIN_VALUE }
+            } else {
+                list.sortedByDescending { (it.photoTakenAt ?: it.createdAt)?.time ?: Long.MAX_VALUE }
+            }
+        }
+    }
 
     LaunchedEffect(lifecycle, retry) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -216,6 +253,16 @@ fun FeedScreen(
                 composeWithPhotoId = null
                 composing = true
             },
+        )
+
+        FeedFilterBar(
+            selectedCategory = selectedCategory,
+            onCategoryChange = { selectedCategory = it },
+            selectedDateFilter = selectedDateFilter,
+            onDateFilterChange = { selectedDateFilter = it },
+            showOnlyMine = showOnlyMine,
+            onShowOnlyMineChange = { showOnlyMine = it },
+            canFilterMine = myUid != null,
         )
 
         when {
@@ -370,6 +417,116 @@ private fun FeedHeader(canPost: Boolean, onPost: () -> Unit) {
     }
 }
 
+@Composable
+private fun FeedFilterBar(
+    selectedCategory: String,
+    onCategoryChange: (String) -> Unit,
+    selectedDateFilter: String,
+    onDateFilterChange: (String) -> Unit,
+    showOnlyMine: Boolean,
+    onShowOnlyMineChange: (Boolean) -> Unit,
+    canFilterMine: Boolean,
+) {
+    val dateOptions = listOf("Newest", "Oldest", "Today", "This Week")
+    val categories = listOf("All") + POST_CATEGORIES
+    var categoryMenuOpen by remember { mutableStateOf(false) }
+    var dateMenuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Category dropdown chip
+        Box {
+            FilterChip(
+                selected = selectedCategory != "All",
+                onClick = { categoryMenuOpen = true },
+                label = { Text("Category: $selectedCategory ▾") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Turquoise,
+                    selectedLabelColor = Color.White,
+                ),
+            )
+            DropdownMenu(
+                expanded = categoryMenuOpen,
+                onDismissRequest = { categoryMenuOpen = false },
+            ) {
+                categories.forEach { category ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = category,
+                                fontWeight = if (selectedCategory.equals(category, ignoreCase = true)) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            )
+                        },
+                        onClick = {
+                            onCategoryChange(category)
+                            categoryMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+
+        // Date dropdown chip
+        Box {
+            FilterChip(
+                selected = selectedDateFilter != "Newest",
+                onClick = { dateMenuOpen = true },
+                label = { Text("Date: $selectedDateFilter ▾") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = LightGreen,
+                    selectedLabelColor = FeedText,
+                ),
+            )
+            DropdownMenu(
+                expanded = dateMenuOpen,
+                onDismissRequest = { dateMenuOpen = false },
+            ) {
+                dateOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = option,
+                                fontWeight = if (selectedDateFilter == option) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            )
+                        },
+                        onClick = {
+                            onDateFilterChange(option)
+                            dateMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+
+        // My Observations toggle chip
+        if (canFilterMine) {
+            FilterChip(
+                selected = showOnlyMine,
+                onClick = { onShowOnlyMineChange(!showOnlyMine) },
+                label = { Text("My Observations") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = LightGreen,
+                    selectedLabelColor = FeedText,
+                ),
+            )
+        }
+    }
+}
+
 // One post: author, title, photo, reactions, and a short preview of the description that trails off.
 // "Show more" opens the full description and the comments; "Show less" closes them again.
 @Composable
@@ -411,7 +568,7 @@ fun FeedPostCard(
             Avatar(40.dp)
             Column(Modifier.weight(1f)) {
                 Text(authorLabel(post.uid, myUid), color = FeedText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(relativeTime(post.createdAt), color = FeedMuted, fontSize = 12.sp)
+                Text("${relativeTime(post.createdAt)} · ${post.category}", color = FeedMuted, fontSize = 12.sp)
             }
             if (isMine && (onEdit != null || onDelete != null)) PostMenu(onEdit, onDelete)
         }

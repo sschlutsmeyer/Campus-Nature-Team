@@ -15,6 +15,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,18 +25,34 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.campusexplorer.data.AccountRepository
+import com.example.campusexplorer.data.ChatRepository
+import com.example.campusexplorer.data.ChatSummary
 import com.example.campusexplorer.data.FeedPost
+import com.example.campusexplorer.data.MySocial
 import com.example.campusexplorer.data.NaturePhoto
+import com.example.campusexplorer.data.SocialRepository
+import com.example.campusexplorer.ui.Destination
 import com.example.campusexplorer.ui.Feature
-import com.example.campusexplorer.ui.FeaturePlaceholder
+import com.example.campusexplorer.ui.LocalChats
+import com.example.campusexplorer.ui.LocalNavigator
+import com.example.campusexplorer.ui.LocalSession
+import com.example.campusexplorer.ui.LocalSocial
 import com.example.campusexplorer.ui.NatureQuestScreen
+import com.example.campusexplorer.ui.account.AccountScreen
+import com.example.campusexplorer.ui.account.ProfileScreen
 import com.example.campusexplorer.ui.camera.CameraScreen
 import com.example.campusexplorer.ui.feed.FeedScreen
 import com.example.campusexplorer.ui.gallery.GalleryScreen
 import com.example.campusexplorer.ui.map.MapScreen
 import com.example.campusexplorer.ui.learn.LearnScreen
+import com.example.campusexplorer.ui.messages.ChatScreen
+import com.example.campusexplorer.ui.messages.MessagesScreen
 import com.example.campusexplorer.ui.theme.CampusExplorerTheme
-import com.google.firebase.auth.FirebaseAuth
+import com.example.campusexplorer.ui.withAccount
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 
@@ -88,6 +106,11 @@ fun CampusExplorerApp() {
     // Shows a pop-up message. Passed to each screen.
     val showMessage: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
+    // Account messages that can come from anywhere, like "You've been logged out".
+    LaunchedEffect(Unit) {
+        AccountRepository.notices.collect { snackbar.showSnackbar(it) }
+    }
+
     // Shared between screens for the whole session (and kept when the phone rotates).
     // Whether the map shows other users' posted pins. Off (only your own pins) when the app opens.
     var showAllPins by rememberSaveable { mutableStateOf(false) }
@@ -104,120 +127,167 @@ fun CampusExplorerApp() {
     // A pin for the Map to zoom in on, from a post's "Map" button.
     var mapFocusPhotoId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // Standard page layout with slots for a bottom bar and snackbars.
-    Scaffold(
+    // Who's using the app (a guest until they log in), and, with an account, their follows,
+    // friends, blocks, and chats. Every screen can read these (see ui/AppState.kt).
+    val session by AccountRepository.session.collectAsStateWithLifecycle()
+    val accountUid = session.uid?.takeIf { session.hasAccount }
+    val social by remember(accountUid) {
+        if (accountUid == null) flowOf(MySocial()) else SocialRepository.observeMySocial(accountUid)
+    }.collectAsStateWithLifecycle(MySocial())
+    val chats by remember(accountUid) {
+        if (accountUid == null) flowOf(emptyList()) else ChatRepository.observeChats(accountUid).catch { emit(emptyList()) }
+    }.collectAsStateWithLifecycle(emptyList<ChatSummary>())
 
-        // Fill the whole screen.
-        modifier = Modifier.fillMaxSize(),
+    CompositionLocalProvider(
+        LocalSession provides session,
+        LocalSocial provides social,
+        LocalChats provides chats,
+    ) {
 
-        // Where pop-up messages appear.
-        snackbarHost = { SnackbarHost(snackbar) },
+        // Standard page layout with slots for a bottom bar and snackbars.
+        Scaffold(
 
-        // The plain tab bar. The Nature Quest design draws its own instead.
-        bottomBar = {
+            // Fill the whole screen.
+            modifier = Modifier.fillMaxSize(),
 
-            if (!USE_NATURE_QUEST_UI) {
-                NavigationBar {
+            // Where pop-up messages appear.
+            snackbarHost = { SnackbarHost(snackbar) },
 
-                    // One button per tab.
-                    Tab.entries.forEach {
+            // The plain tab bar. The Nature Quest design draws its own instead.
+            bottomBar = {
 
-                        NavigationBarItem(
+                if (!USE_NATURE_QUEST_UI) {
+                    NavigationBar {
 
-                            // Highlight the selected tab.
-                            selected = tab == it,
+                        // One button per tab.
+                        Tab.entries.forEach {
 
-                            // Switch to this tab when tapped.
-                            onClick = { tab = it },
+                            NavigationBarItem(
 
-                            // Tab icon and label.
-                            icon = { Icon(painterResource(it.icon), contentDescription = null) },
-                            label = { Text(it.label) },
+                                // Highlight the selected tab.
+                                selected = tab == it,
+
+                                // Switch to this tab when tapped.
+                                onClick = { tab = it },
+
+                                // Tab icon and label.
+                                icon = { Icon(painterResource(it.icon), contentDescription = null) },
+                                label = { Text(it.label) },
+                            )
+                        }
+                    }
+                }
+            },
+        )
+
+        // innerPadding is the space the bars take up, so content isn't hidden behind them.
+        { innerPadding ->
+
+            // Nature Quest design: a home screen of features plus back/forward/home navigation
+            // (see ui/HomeScreen.kt and ui/MapCameraUI.kt).
+            if (USE_NATURE_QUEST_UI) {
+
+                NatureQuestScreen { destination ->
+                    val nav = LocalNavigator.current
+
+                    // Links between screens: a photo's post in the Feed, a new post with a photo,
+                    // and a post's pin on the Map.
+                    val viewPost: (String) -> Unit = { postId ->
+                        feedFocusPostId = postId
+                        nav.open(Feature.Feed)
+                    }
+                    val createPost: (NaturePhoto) -> Unit = { photo ->
+
+                        // Guests can save pins but need an account to post them.
+                        nav.withAccount(session, "post to the feed") {
+                            feedComposePhotoId = photo.id
+                            nav.open(Feature.Feed)
+                        }
+                    }
+                    val viewOnMap: (FeedPost) -> Unit = { post ->
+
+                        // Someone else's pin only shows when the map shows everyone's pins.
+                        if (post.uid != session.uid) showAllPins = true
+                        mapFocusPhotoId = post.photoId
+                        nav.open(Feature.Map)
+                    }
+
+                    // The screens opened from inside other screens: profiles and chats.
+                    val feature = when (destination) {
+                        is Destination.Profile -> {
+                            ProfileScreen(
+                                uid = destination.uid,
+                                onMessage = showMessage,
+                                onOpenPost = { viewPost(it.id) },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            return@NatureQuestScreen
+                        }
+                        is Destination.Chat -> {
+                            ChatScreen(otherUid = destination.uid, onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                            return@NatureQuestScreen
+                        }
+                        is Destination.Screen -> destination.feature
+                        Destination.Home -> return@NatureQuestScreen
+                    }
+
+                    // The screen for each feature.
+                    when (feature) {
+                        Feature.Account -> AccountScreen(
+                            onMessage = showMessage,
+                            onOpenPost = { viewPost(it.id) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        Feature.Messages -> MessagesScreen(modifier = Modifier.fillMaxSize())
+                        Feature.Map -> MapScreen(
+                            showAllPins = showAllPins,
+                            onShowAllPinsChange = { showAllPins = it },
+                            pinListOpen = mapPinListOpen,
+                            onPinListOpenChange = { mapPinListOpen = it },
+                            onMessage = showMessage,
+                            modifier = Modifier.fillMaxSize(),
+                            onViewPost = viewPost,
+                            onCreatePost = createPost,
+                            focusPhotoId = mapFocusPhotoId,
+                            onFocusHandled = { mapFocusPhotoId = null },
+                        )
+                        Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                        Feature.Gallery -> GalleryScreen(
+                            onMessage = showMessage,
+                            modifier = Modifier.fillMaxSize(),
+                            onViewPost = viewPost,
+                            onCreatePost = createPost,
+                        )
+                        Feature.Feed -> FeedScreen(
+                            onMessage = showMessage,
+                            modifier = Modifier.fillMaxSize(),
+                            focusPostId = feedFocusPostId,
+                            onFocusHandled = { feedFocusPostId = null },
+                            composePhotoId = feedComposePhotoId,
+                            onComposeHandled = { feedComposePhotoId = null },
+                            onViewOnMap = viewOnMap,
+                        )
+                        Feature.Learn -> LearnScreen(
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                 }
-            }
-        },
-    )
 
-    // innerPadding is the space the bars take up, so content isn't hidden behind them.
-    { innerPadding ->
+                // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
+            } else {
 
-        // Nature Quest design: a home screen of features plus back/forward/home navigation
-        // (see ui/HomeScreen.kt and ui/MapCameraUI.kt).
-        if (USE_NATURE_QUEST_UI) {
-
-            NatureQuestScreen { feature, open ->
-
-                // Links between screens: a photo's post in the Feed, a new post with a photo,
-                // and a post's pin on the Map.
-                val viewPost: (String) -> Unit = { postId ->
-                    feedFocusPostId = postId
-                    open(Feature.Feed)
-                }
-                val createPost: (NaturePhoto) -> Unit = { photo ->
-                    feedComposePhotoId = photo.id
-                    open(Feature.Feed)
-                }
-                val viewOnMap: (FeedPost) -> Unit = { post ->
-
-                    // Someone else's pin only shows when the map shows everyone's pins.
-                    if (post.uid != FirebaseAuth.getInstance().currentUser?.uid) showAllPins = true
-                    mapFocusPhotoId = post.photoId
-                    open(Feature.Map)
-                }
-
-                // The screen for each feature. Features without one yet show a placeholder.
-                when (feature) {
-                    Feature.Map -> MapScreen(
+                val contentModifier = Modifier.padding(innerPadding)
+                when (tab) {
+                    Tab.Map -> MapScreen(
                         showAllPins = showAllPins,
                         onShowAllPinsChange = { showAllPins = it },
                         pinListOpen = mapPinListOpen,
                         onPinListOpenChange = { mapPinListOpen = it },
                         onMessage = showMessage,
-                        modifier = Modifier.fillMaxSize(),
-                        onViewPost = viewPost,
-                        onCreatePost = createPost,
-                        focusPhotoId = mapFocusPhotoId,
-                        onFocusHandled = { mapFocusPhotoId = null },
+                        modifier = contentModifier,
                     )
-                    Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
-                    Feature.Gallery -> GalleryScreen(
-                        onMessage = showMessage,
-                        modifier = Modifier.fillMaxSize(),
-                        onViewPost = viewPost,
-                        onCreatePost = createPost,
-                    )
-                    Feature.Feed -> FeedScreen(
-                        onMessage = showMessage,
-                        modifier = Modifier.fillMaxSize(),
-                        focusPostId = feedFocusPostId,
-                        onFocusHandled = { feedFocusPostId = null },
-                        composePhotoId = feedComposePhotoId,
-                        onComposeHandled = { feedComposePhotoId = null },
-                        onViewOnMap = viewOnMap,
-                    )
-                    Feature.Learn -> LearnScreen(
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    else -> FeaturePlaceholder(feature)
+                    Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
                 }
-            }
-
-            // Plain layout: show the screen for the selected tab (see MapScreen.kt and CameraScreen.kt).
-        } else {
-
-            val contentModifier = Modifier.padding(innerPadding)
-            when (tab) {
-                Tab.Map -> MapScreen(
-                    showAllPins = showAllPins,
-                    onShowAllPinsChange = { showAllPins = it },
-                    pinListOpen = mapPinListOpen,
-                    onPinListOpenChange = { mapPinListOpen = it },
-                    onMessage = showMessage,
-                    modifier = contentModifier,
-                )
-                Tab.Camera -> CameraScreen(onMessage = showMessage, modifier = contentModifier)
             }
         }
     }

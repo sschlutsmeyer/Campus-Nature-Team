@@ -1,11 +1,50 @@
 rules_version = '2';
 
 // Firestore security rules. Paste into Firebase console > Firestore Database > Rules, then Publish.
+//
+// Accounts: everyone starts as a guest (Firebase anonymous sign-in). Signing up turns the guest into
+// an account with a username and a profile in /users. Guests can save their own pins and read the feed;
+// posting, commenting, reacting, following, friending, and messaging need an account (a /users profile).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() {
       return request.auth != null;
+    }
+
+    // Whether a user has an account (a profile). Guests don't.
+    function hasAccount(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    // Whether blocker has blocked target.
+    function blocked(blocker, target) {
+      return exists(/databases/$(database)/documents/blocks/$(blocker + '_' + target));
+    }
+
+    function eitherBlocked(a, b) {
+      return blocked(a, b) || blocked(b, a);
+    }
+
+    // Two users' shared id: both uids, smaller first, joined by "_". Used by friendships and chats.
+    function pairOf(a, b) {
+      return a < b ? a + '_' + b : b + '_' + a;
+    }
+
+    function areFriends(a, b) {
+      return exists(/databases/$(database)/documents/friendships/$(pairOf(a, b)));
+    }
+
+    // Whether you're one of the two users in an id made of two uids (a pair id, or "from_to").
+    // Works for documents that don't exist yet, so the app can check whether one exists.
+    function inPair(id) {
+      return request.auth.uid in id.split('_');
+    }
+
+    // The other user in a pair id that you're part of.
+    function otherInPair(id) {
+      let parts = id.split('_');
+      return parts[0] == request.auth.uid ? parts[1] : parts[0];
     }
 
     // Photo info: caption, location, time, owner, image path.
@@ -14,18 +53,39 @@ service cloud.firestore {
     // and image path. So a pin that was never posted can't be seen by anyone else.
     match /photos/{photoId} {
 
+      // A guest logging in to an existing account can bring their pins along: while still a guest,
+      // they list the pins in /photoTransfers, and once logged in, the account claims them.
+      function claimedFromGuest() {
+        let transfer = get(/databases/$(database)/documents/photoTransfers/$(resource.data.uid)).data;
+        return transfer.to == request.auth.uid && photoId in transfer.photoIds;
+      }
+
       // Only the owner can see a photo.
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
 
-      // You can only add photos as yourself, and only edit your own (without changing the owner).
+      // You can only add photos as yourself, and only edit your own (without changing the owner),
+      // except to claim your guest pins.
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow update: if signedIn()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == resource.data.uid;
+      allow update: if signedIn() && (
+        (resource.data.uid == request.auth.uid && request.resource.data.uid == resource.data.uid)
+        || (request.resource.data.uid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid'])
+          && claimedFromGuest()));
 
       // TESTING ONLY: anyone signed in can delete any photo.
       // Before release, change to: signedIn() && resource.data.uid == request.auth.uid
       allow delete: if signedIn();
+    }
+
+    // A guest's pins to move to the account they're logging in to (see photos above).
+    match /photoTransfers/{fromUid} {
+      allow read, delete: if signedIn()
+        && (request.auth.uid == fromUid || resource.data.to == request.auth.uid);
+      allow create, update: if signedIn() && request.auth.uid == fromUid
+        && request.resource.data.keys().hasOnly(['to', 'photoIds', 'createdAt'])
+        && request.resource.data.to is string
+        && request.resource.data.photoIds is list
+        && request.resource.data.photoIds.size() <= 500;
     }
 
     // Image bytes for older photos saved before we used Storage.
@@ -34,6 +94,162 @@ service cloud.firestore {
 
       // TESTING ONLY: anyone signed in can delete.
       allow delete: if signedIn();
+    }
+
+    // Profiles. Anyone signed in can see them. You can only make and edit your own.
+    match /users/{uid} {
+
+      // Usernames: 3 to 20 letters, numbers, underscores, or periods. Limits match AccountRepository.kt.
+      function validProfile(data) {
+        return data.keys().hasOnly(['username', 'usernameLower', 'bio', 'photoPath', 'createdAt'])
+          && data.username is string
+          && data.username.matches('[A-Za-z0-9_.]{3,20}')
+          && data.usernameLower == data.username.lower()
+          && data.bio is string
+          && data.bio.size() <= 160
+          && (data.get('photoPath', null) == null
+            || (data.photoPath is string && data.photoPath.matches('avatars/' + uid + '/[^/]+')));
+      }
+
+      // After this write, the username's entry in /usernames must point to you.
+      function ownsName(name) {
+        return getAfter(/databases/$(database)/documents/usernames/$(name)).data.uid == uid;
+      }
+
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && ownsName(request.resource.data.usernameLower);
+      allow update: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (request.resource.data.usernameLower == resource.data.usernameLower
+          || ownsName(request.resource.data.usernameLower));
+    }
+
+    // One entry per username (lowercase), so no two accounts can share one. Logging in looks up the
+    // username here to find the account's sign-in email. You claim a name together with your profile
+    // and give up your old one when you change it.
+    match /usernames/{name} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'email'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email is string
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == name;
+      allow delete: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower != name;
+    }
+
+    // follows/{follower}_{followed}. Anyone can see who follows whom.
+    match /follows/{followId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['follower', 'followed', 'createdAt'])
+        && request.resource.data.follower == request.auth.uid
+        && followId == request.auth.uid + '_' + request.resource.data.followed
+        && request.resource.data.followed != request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && hasAccount(request.auth.uid)
+        && hasAccount(request.resource.data.followed)
+        && !eitherBlocked(request.auth.uid, request.resource.data.followed);
+
+      // Unfollow someone, or remove one of your followers.
+      allow delete: if signedIn() && inPair(followId);
+    }
+
+    // friendRequests/{from}_{to}. Only the two users can see a request.
+    match /friendRequests/{requestId} {
+      allow get: if signedIn() && inPair(requestId);
+      allow list: if signedIn()
+        && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['from', 'to', 'createdAt'])
+        && request.resource.data.from == request.auth.uid
+        && requestId == request.auth.uid + '_' + request.resource.data.to
+        && request.resource.data.to != request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && hasAccount(request.auth.uid)
+        && hasAccount(request.resource.data.to)
+        && !eitherBlocked(request.auth.uid, request.resource.data.to)
+        && !areFriends(request.auth.uid, request.resource.data.to);
+
+      // Cancel your request, or decline or accept one sent to you.
+      allow delete: if signedIn() && inPair(requestId);
+    }
+
+    // friendships/{pair id}. Anyone can see who's friends with whom.
+    match /friendships/{pairId} {
+      allow read: if signedIn();
+
+      // Accepting a friend request: the other user must have sent you one.
+      allow create: if signedIn() && inPair(pairId)
+        && request.resource.data.keys().hasOnly(['users', 'createdAt'])
+        && request.resource.data.users == pairId.split('_')
+        && pairOf(request.resource.data.users[0], request.resource.data.users[1]) == pairId
+        && request.resource.data.createdAt == request.time
+        && exists(/databases/$(database)/documents/friendRequests/$(otherInPair(pairId) + '_' + request.auth.uid));
+
+      // Either friend can unfriend.
+      allow delete: if signedIn() && inPair(pairId);
+    }
+
+    // blocks/{blocker}_{blocked}. Only the two users can see a block. Blocking also removes follows,
+    // friend requests, and the friendship (the app does that), and the rules stop new ones.
+    match /blocks/{blockId} {
+      allow get: if signedIn() && inPair(blockId);
+      allow list: if signedIn()
+        && (resource.data.blocker == request.auth.uid || resource.data.blocked == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['blocker', 'blocked', 'createdAt'])
+        && request.resource.data.blocker == request.auth.uid
+        && blockId == request.auth.uid + '_' + request.resource.data.blocked
+        && request.resource.data.blocked != request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow delete: if signedIn() && blockId.split('_')[0] == request.auth.uid;
+    }
+
+    // Direct messages between two friends. chats/{pair id} holds the latest message (for the list of
+    // chats) and when each user last read the chat. Only the two users can see a chat.
+    match /chats/{chatId} {
+      function validChat(data) {
+        return data.keys().hasOnly(['users', 'lastMessage', 'lastSender', 'lastMessageAt', 'lastRead'])
+          && data.users == chatId.split('_')
+          && data.lastRead is map;
+      }
+
+      allow get: if signedIn() && inPair(chatId);
+      allow list: if signedIn() && request.auth.uid in resource.data.users;
+
+      // The first message between two friends starts the chat.
+      allow create: if signedIn() && inPair(chatId)
+        && validChat(request.resource.data)
+        && request.resource.data.lastRead.keys().hasOnly([request.auth.uid])
+        && exists(/databases/$(database)/documents/friendships/$(chatId));
+
+      // Sending updates the latest message; reading updates only your own "read" time.
+      allow update: if signedIn() && inPair(chatId)
+        && validChat(request.resource.data)
+        && request.resource.data.lastRead.diff(resource.data.lastRead).affectedKeys().hasOnly([request.auth.uid]);
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && inPair(chatId);
+
+        // Only friends can send messages. Lengths match ChatRepository.kt.
+        allow create: if signedIn() && inPair(chatId)
+          && request.resource.data.keys().hasOnly(['from', 'text', 'createdAt'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.trim().size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.createdAt == request.time
+          && exists(/databases/$(database)/documents/friendships/$(chatId));
+
+        // Unsend your own message.
+        allow delete: if signedIn() && resource.data.from == request.auth.uid;
+      }
     }
 
     // Feed posts. A photo post's id is its photo's id, so each photo can be posted only once.
@@ -55,7 +271,7 @@ service cloud.firestore {
           && validText(request.resource.data);
       }
 
-      // Anyone can like, dislike, or clear their reaction, changing only their own entry.
+      // Anyone with an account can like, dislike, or clear their reaction, changing only their own entry.
       function isReactionChange() {
         let me = request.auth.uid;
         let oldLikes = resource.data.likedBy.toSet();
@@ -65,10 +281,11 @@ service cloud.firestore {
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy', 'dislikedBy'])
           && newLikes.difference(oldLikes).union(oldLikes.difference(newLikes)).hasOnly([me])
           && newDislikes.difference(oldDislikes).union(oldDislikes.difference(newDislikes)).hasOnly([me])
-          && !(me in newLikes && me in newDislikes);
+          && !(me in newLikes && me in newDislikes)
+          && hasAccount(me);
       }
 
-      // Anyone can bookmark or unbookmark a post, adding or removing only their own entry.
+      // Anyone (guests too) can bookmark or unbookmark a post, adding or removing only their own entry.
       // Older posts have no bookmarkedBy list yet, so treat a missing one as empty.
       function isBookmarkChange() {
         let me = request.auth.uid;
@@ -88,7 +305,8 @@ service cloud.firestore {
       // Anyone signed in can read the feed.
       allow read: if signedIn();
 
-      // Post as yourself, starting with no reactions or comments. You can only share your own photo.
+      // Post as yourself (with an account), starting with no reactions or comments.
+      // You can only share your own photo.
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['uid', 'title', 'description', 'createdAt',
             'photoId', 'storagePath', 'latitude', 'longitude', 'photoTakenAt',
@@ -101,7 +319,8 @@ service cloud.firestore {
         && request.resource.data.commentCount == 0
         && (request.resource.data.get('photoId', null) == null
           || (request.resource.data.photoId == postId
-            && get(/databases/$(database)/documents/photos/$(postId)).data.uid == request.auth.uid));
+            && get(/databases/$(database)/documents/photos/$(postId)).data.uid == request.auth.uid))
+        && hasAccount(request.auth.uid);
 
       allow update: if signedIn() && (isOwnerEdit() || isReactionChange() || isBookmarkChange() || isCommentCountChange());
 
@@ -111,7 +330,7 @@ service cloud.firestore {
       match /comments/{commentId} {
         allow read: if signedIn();
 
-        // Comment as yourself on a post that exists.
+        // Comment as yourself (with an account) on a post that exists, unless its author blocked you.
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly(['uid', 'text', 'createdAt'])
           && request.resource.data.uid == request.auth.uid
@@ -119,7 +338,9 @@ service cloud.firestore {
           && request.resource.data.text.trim().size() > 0
           && request.resource.data.text.size() <= 500
           && request.resource.data.createdAt == request.time
-          && exists(/databases/$(database)/documents/posts/$(postId));
+          && exists(/databases/$(database)/documents/posts/$(postId))
+          && hasAccount(request.auth.uid)
+          && !blocked(get(/databases/$(database)/documents/posts/$(postId)).data.uid, request.auth.uid);
 
         // Whoever wrote a comment can delete it, and so can the post's author.
         allow delete: if signedIn() && (resource.data.uid == request.auth.uid

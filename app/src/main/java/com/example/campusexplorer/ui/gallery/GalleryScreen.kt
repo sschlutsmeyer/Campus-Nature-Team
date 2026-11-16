@@ -38,6 +38,7 @@ import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.ui.LeafGreen
 import com.example.campusexplorer.ui.LightGreen
+import com.example.campusexplorer.ui.LocalSocial
 import com.example.campusexplorer.ui.PhotoImportHost
 import com.example.campusexplorer.ui.Turquoise
 import com.example.campusexplorer.ui.feed.FeedMuted
@@ -285,11 +286,14 @@ private fun BookmarkedPostsTab(
     // Posts showing their full description and comments ("Show more"), like in the feed.
     var expandedIds by remember { mutableStateOf(emptySet<String>()) }
 
-    LaunchedEffect(uid) {
+    // Posts from people you've blocked, or who've blocked you, are hidden.
+    val hidden = LocalSocial.current.hidden
+
+    LaunchedEffect(uid, hidden) {
         // Collects posts where your uid is inside bookmarkedBy
         try {
             PostRepository.observePosts().collect { allPosts ->
-                bookmarkedPosts = allPosts.filter { uid in it.bookmarkedBy }
+                bookmarkedPosts = allPosts.filter { uid in it.bookmarkedBy && it.uid !in hidden }
                 loading = false
             }
         } catch (e: CancellationException) {

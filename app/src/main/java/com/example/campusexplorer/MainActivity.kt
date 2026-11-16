@@ -181,7 +181,16 @@ fun CampusExplorerApp() {
                         focusPhotoId = mapFocusPhotoId,
                         onFocusHandled = { mapFocusPhotoId = null },
                     )
-                    Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+
+                    Feature.Camera -> CameraScreen(
+                        onMessage = showMessage,
+                        modifier = Modifier.fillMaxSize(),
+                        onPostToFeed = { photoId ->
+                            feedComposePhotoId = photoId
+                            open(Feature.Feed)
+                        },
+                    )
+
                     Feature.Gallery -> GalleryScreen(
                         onMessage = showMessage,
                         modifier = Modifier.fillMaxSize(),

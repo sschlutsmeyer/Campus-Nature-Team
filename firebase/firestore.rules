@@ -48,11 +48,29 @@ service cloud.firestore {
           && data.description.size() <= 2000;
       }
 
-      // The author can change the title and description, and nothing else about the post.
+      // Optional identification metadata. Missing fields remain valid for older clients/posts.
+      function validPostMetadata(data) {
+        let category = data.get('category', 'Other');
+        let species = data.get('identification', null);
+        return category in ['Plants', 'Animals', 'Fungi', 'Landscape', 'Other']
+          && (species == null || (species is map
+            && category in ['Plants', 'Animals', 'Fungi', 'Other']
+            && species.keys().hasAll(['taxonId', 'commonName', 'scientificName', 'confidence'])
+            && species.keys().hasOnly(['taxonId', 'commonName', 'scientificName', 'confidence'])
+            && species.taxonId is int && species.taxonId > 0
+            && species.commonName is string && species.commonName.trim().size() > 0
+            && species.commonName.size() <= 200
+            && species.scientificName is string && species.scientificName.trim().size() > 0
+            && species.scientificName.size() <= 200
+            && species.confidence in ['NOT_CERTAIN', 'SOMEWHAT_CERTAIN', 'CERTAIN']));
+      }
+
+      // The author can edit text, category, and identification, while ownership and photo fields stay fixed.
       function isOwnerEdit() {
         return resource.data.uid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description'])
-          && validText(request.resource.data);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description', 'category', 'identification'])
+          && validText(request.resource.data)
+          && validPostMetadata(request.resource.data);
       }
 
       // Anyone can like, dislike, or clear their reaction, changing only their own entry.
@@ -92,9 +110,10 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['uid', 'title', 'description', 'createdAt',
             'photoId', 'storagePath', 'latitude', 'longitude', 'photoTakenAt',
-            'likedBy', 'dislikedBy', 'commentCount'])
+            'likedBy', 'dislikedBy', 'commentCount', 'category', 'identification'])
         && request.resource.data.uid == request.auth.uid
         && validText(request.resource.data)
+        && validPostMetadata(request.resource.data)
         && request.resource.data.createdAt == request.time
         && request.resource.data.likedBy == []
         && request.resource.data.dislikedBy == []

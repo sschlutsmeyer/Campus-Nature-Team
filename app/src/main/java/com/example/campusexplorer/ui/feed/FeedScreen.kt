@@ -29,8 +29,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -198,10 +196,17 @@ fun FeedScreen(
     }
 
     // Open the post from a pin's "View post" button once the feed has loaded.
-    LaunchedEffect(focusPostId, posts, loading, loadError) {
+    LaunchedEffect(focusPostId, posts, filteredPosts, loading, loadError) {
         val target = focusPostId ?: return@LaunchedEffect
         if (loading || loadError != null) return@LaunchedEffect
-        val index = posts.indexOfFirst { it.id == target }
+        val index = filteredPosts.indexOfFirst { it.id == target }
+        if (index < 0 && posts.any { it.id == target }) {
+            // A link from a pin should reveal its post even if current filters hide it.
+            selectedCategory = "All"
+            selectedDateFilter = "Newest"
+            showOnlyMine = false
+            return@LaunchedEffect
+        }
         if (index < 0) {
 
             // The list may still be catching up with the server. If it updates, this starts over.
@@ -223,9 +228,9 @@ fun FeedScreen(
     }
 
     // Show a just-published post.
-    LaunchedEffect(scrollToPostId, posts) {
+    LaunchedEffect(scrollToPostId, filteredPosts) {
         val target = scrollToPostId ?: return@LaunchedEffect
-        val index = posts.indexOfFirst { it.id == target }
+        val index = filteredPosts.indexOfFirst { it.id == target }
         if (index >= 0) {
             listState.animateScrollToItem(index)
             scrollToPostId = null
@@ -276,12 +281,16 @@ fun FeedScreen(
                 message = "No posts yet.\nTap Post to share a photo from your gallery or write a text post.",
                 modifier = Modifier.weight(1f),
             )
+            filteredPosts.isEmpty() -> FeedStatus(
+                message = "No posts match your filters.\nTry changing the category or other filters.",
+                modifier = Modifier.weight(1f),
+            )
             else -> LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 16.dp),
             ) {
-                items(posts, key = { it.id }) { post ->
+                items(filteredPosts, key = { it.id }) { post ->
                     FeedPostCard(
                         post = post,
                         myUid = myUid,
@@ -331,6 +340,10 @@ fun FeedScreen(
             onPosted = { postId ->
                 composing = false
                 composeWithPhotoId = null
+                // Show the newly published post, even if a previous filter would hide it.
+                selectedCategory = "All"
+                selectedDateFilter = "Newest"
+                showOnlyMine = false
                 scrollToPostId = postId
                 onMessage("Posted to the feed!")
             },
@@ -356,7 +369,7 @@ fun FeedScreen(
                 Text(
                     if (post.photoId != null) {
                         "This removes the post and its likes and comments for everyone. Your photo " +
-                            "stays in your gallery and on your map, but other users won't see it."
+                                "stays in your gallery and on your map, but other users won't see it."
                     } else {
                         "This removes the post and its likes and comments for everyone."
                     }
@@ -589,6 +602,8 @@ fun FeedPostCard(
                 contentDescription = post.title,
             )
         }
+
+        post.identification?.let { PostIdentificationSummary(it) }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             FeedAction(

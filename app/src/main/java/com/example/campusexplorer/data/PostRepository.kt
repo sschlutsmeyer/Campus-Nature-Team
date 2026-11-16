@@ -20,6 +20,9 @@ const val POST_DESCRIPTION_MAX = 2000
 const val COMMENT_MAX = 500
 
 // One post in the feed. A photo post shares one of its author's photos; a text post has no photo.
+
+val POST_CATEGORIES = listOf("Plants", "Animals", "Fungi", "Landscape", "Other")
+
 data class FeedPost(
     val id: String,
 
@@ -27,6 +30,7 @@ data class FeedPost(
     val uid: String,
     val title: String,
     val description: String,
+    val category: String = "Other",
     val createdAt: Date?,
 
     // The shared photo's id, or null for a text-only post. A photo post's id is the same as its
@@ -144,7 +148,7 @@ object PostRepository {
 
     // Publishes a post and returns its id. If a photo is given, it's shared with the post and its
     // pin is renamed to the post's title (if different), so the pin and post always match.
-    suspend fun createPost(title: String, description: String, photo: NaturePhoto?): String {
+    suspend fun createPost(title: String, description: String, photo: NaturePhoto?, category: String = "Other"): String {
         val uid = PhotoRepository.ensureSignedIn()
         val cleanTitle = cleanTitle(title)
         val cleanDescription = cleanDescription(description)
@@ -152,7 +156,7 @@ object PostRepository {
         // Text-only post: a new id and nothing else to update.
         if (photo == null) {
             val postRef = posts.document()
-            postRef.set(newPostData(uid, cleanTitle, cleanDescription, photo = null)).await()
+            postRef.set(newPostData(uid, cleanTitle, cleanDescription, photo = null, category = category)).await()
             return postRef.id
         }
 
@@ -166,7 +170,7 @@ object PostRepository {
             val current = transaction.get(photoRef)
             check(current.exists()) { "This photo was deleted." }
 
-            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo))
+            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo, category))
             if (current.getString("caption") != cleanTitle) {
                 transaction.update(photoRef, "caption", cleanTitle)
             }
@@ -175,11 +179,11 @@ object PostRepository {
     }
 
     // Changes your post's title and description. A new title also renames the shared photo's pin.
-    suspend fun updatePost(post: FeedPost, title: String, description: String) {
+    suspend fun updatePost(post: FeedPost, title: String, description: String, category: String = post.category) {
         val uid = PhotoRepository.ensureSignedIn()
         check(post.uid == uid) { "You can only edit your own posts." }
         val newTitle = cleanTitle(title)
-        val changes = mapOf("title" to newTitle, "description" to cleanDescription(description))
+        val changes = mapOf("title" to newTitle, "description" to cleanDescription(description), "category" to category)
         val postRef = posts.document(post.id)
 
         // No pin to rename: just update the post.
@@ -306,10 +310,11 @@ object PostRepository {
     }
 
     // A new post's fields. Every field is always written (null when unused) so the rules can check them.
-    private fun newPostData(uid: String, title: String, description: String, photo: NaturePhoto?) = mapOf(
+    private fun newPostData(uid: String, title: String, description: String, photo: NaturePhoto?, category: String = "Other") = mapOf(
         "uid" to uid,
         "title" to title,
         "description" to description,
+        "category" to category,
         "createdAt" to FieldValue.serverTimestamp(),
         "photoId" to photo?.id,
         "storagePath" to photo?.storagePath,
@@ -340,6 +345,7 @@ object PostRepository {
             uid = uid,
             title = doc.getString("title").orEmpty(),
             description = doc.getString("description").orEmpty(),
+            category = doc.getString("category")?.takeIf { it.isNotBlank() } ?: "Other",
 
             // A brand-new post's time is set by the server. Until then, use the phone's estimate.
             createdAt = doc.getTimestamp("createdAt", ServerTimestampBehavior.ESTIMATE)?.toDate(),

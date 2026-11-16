@@ -1,6 +1,10 @@
 package com.example.campusexplorer.ui.feed
 
 import android.util.Log
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import com.example.campusexplorer.data.POST_CATEGORIES
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -112,6 +116,7 @@ fun CreatePostDialog(
     var photoId by rememberSaveable { mutableStateOf<String?>(null) }
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf("Other") }
 
     // True once you type your own title, so choosing a different photo doesn't replace it.
     var titleEdited by rememberSaveable { mutableStateOf(false) }
@@ -150,8 +155,10 @@ fun CreatePostDialog(
 
         // Start with the photo from "Post to feed", once your photos have loaded.
         if (!initialPhotoHandled) {
-            initialPhotoHandled = true
-            list.firstOrNull { it.id == initialPhotoId && it.id !in postedPhotoIds }?.let { choose(it) }
+            list.firstOrNull { it.id == initialPhotoId && it.id !in postedPhotoIds }?.let {
+                initialPhotoHandled = true
+                choose(it)
+            }
         }
 
         // The chosen photo was deleted (maybe on another screen). Go back to choosing.
@@ -178,7 +185,7 @@ fun CreatePostDialog(
         error = null
         scope.launch {
             try {
-                onPosted(PostRepository.createPost(title, description, selectedPhoto))
+                onPosted(PostRepository.createPost(title, description, selectedPhoto, category))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -230,6 +237,8 @@ fun CreatePostDialog(
                         },
                         description = description,
                         onDescriptionChange = { description = it },
+                        category = category,
+                        onCategoryChange = { category = it },
                         posting = posting,
                         error = error,
                         onChangePhoto = goBack,
@@ -242,15 +251,18 @@ fun CreatePostDialog(
     }
 }
 
-// Pop-up for changing your post's title and description.
+// Pop-up for changing your post's title, category, and description.
 @Composable
 fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
     var title by rememberSaveable(post.id) { mutableStateOf(post.title) }
     var description by rememberSaveable(post.id) { mutableStateOf(post.description) }
+    var category by rememberSaveable(post.id) { mutableStateOf(post.category) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val changed = title.trim() != post.title || description.trim() != post.description
+    val changed = title.trim() != post.title ||
+            description.trim() != post.description ||
+            category != post.category
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -278,6 +290,11 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                CategorySelector(
+                    selectedCategory = category,
+                    onCategoryChange = { category = it },
+                    enabled = !saving,
+                )
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it.take(POST_DESCRIPTION_MAX) },
@@ -300,7 +317,7 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
                     error = null
                     scope.launch {
                         try {
-                            PostRepository.updatePost(post, title, description)
+                            PostRepository.updatePost(post, title, description, category)
                             onSaved()
                         } catch (e: CancellationException) {
                             throw e
@@ -317,6 +334,43 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
             TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+@Composable
+private fun CategorySelector(
+    selectedCategory: String,
+    onCategoryChange: (String) -> Unit,
+    enabled: Boolean = true,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "Category",
+            color = FeedText,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            POST_CATEGORIES.forEach { category ->
+                val isSelected = selectedCategory.equals(category, ignoreCase = true)
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { onCategoryChange(category) },
+                    enabled = enabled,
+                    label = { Text(category) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Turquoise,
+                        selectedLabelColor = Color.White,
+                    ),
+                )
+            }
+        }
+    }
 }
 
 // "New post" heading with a back arrow (while writing) and a close button.
@@ -465,6 +519,8 @@ private fun PostForm(
     onTitleChange: (String) -> Unit,
     description: String,
     onDescriptionChange: (String) -> Unit,
+    category: String,
+    onCategoryChange: (String) -> Unit,
     posting: Boolean,
     error: String?,
     onChangePhoto: () -> Unit,
@@ -524,6 +580,13 @@ private fun PostForm(
             colors = feedFieldColors(),
             modifier = Modifier.fillMaxWidth(),
         )
+
+        CategorySelector(
+            selectedCategory = category,
+            onCategoryChange = onCategoryChange,
+            enabled = !posting,
+        )
+
         OutlinedTextField(
             value = description,
             onValueChange = { onDescriptionChange(it.take(POST_DESCRIPTION_MAX)) },

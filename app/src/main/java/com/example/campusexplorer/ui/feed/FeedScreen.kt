@@ -1,6 +1,8 @@
 package com.example.campusexplorer.ui.feed
 
 import android.util.Log
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,6 +71,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import com.example.campusexplorer.data.POST_CATEGORIES
 import com.example.campusexplorer.data.COMMENT_MAX
 import com.example.campusexplorer.data.FeedPost
 import com.example.campusexplorer.data.PostComment
@@ -171,6 +178,36 @@ fun FeedScreen(
     var deletingPost by remember { mutableStateOf<FeedPost?>(null) }
     var deleteInProgress by remember { mutableStateOf(false) }
 
+    // Filter states for Issue #27 (Category, Date range / sort, and My Posts)
+    var selectedCategory by rememberSaveable { mutableStateOf("All") }
+    var selectedDateFilter by rememberSaveable { mutableStateOf("Newest") } // "Newest", "Oldest", "Today", "This Week"
+    var showOnlyMine by rememberSaveable { mutableStateOf(false) }
+
+    val filteredPosts = remember(posts, selectedCategory, selectedDateFilter, showOnlyMine, myUid) {
+        val now = System.currentTimeMillis()
+        val oneDayMs = 24 * 60 * 60 * 1000L
+        val oneWeekMs = 7 * oneDayMs
+
+        posts.filter { post ->
+            val matchesCategory = selectedCategory == "All" ||
+                    post.category.equals(selectedCategory, ignoreCase = true)
+            val matchesOwner = !showOnlyMine || (myUid != null && post.uid == myUid)
+            val postTime = (post.photoTakenAt ?: post.createdAt)?.time ?: 0L
+            val matchesDate = when (selectedDateFilter) {
+                "Today" -> (now - postTime) <= oneDayMs
+                "This Week" -> (now - postTime) <= oneWeekMs
+                else -> true
+            }
+            matchesCategory && matchesOwner && matchesDate
+        }.let { list ->
+            if (selectedDateFilter == "Oldest") {
+                list.sortedBy { (it.photoTakenAt ?: it.createdAt)?.time ?: Long.MIN_VALUE }
+            } else {
+                list.sortedByDescending { (it.photoTakenAt ?: it.createdAt)?.time ?: Long.MAX_VALUE }
+            }
+        }
+    }
+
     LaunchedEffect(lifecycle, retry) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
 
@@ -192,12 +229,16 @@ fun FeedScreen(
         }
     }
 
-    // Posts from people you've blocked, or who've blocked you, are hidden. Recent posts (from the last
-    // day) by people you follow come first, newest first, then everything else.
+    // The posts the filters above allow, minus ones from people you've blocked or who've blocked you.
+    // With the usual "Newest" order, recent posts (from the last day) by people you follow come
+    // first, then everything else.
     val dayAgo = System.currentTimeMillis() - FOLLOWING_FIRST_MS
-    val (followingPosts, otherPosts) = posts
+    val followingFirst = selectedDateFilter == "Newest" && !showOnlyMine
+    val (followingPosts, otherPosts) = filteredPosts
         .filter { it.uid !in social.hidden }
-        .partition { it.uid in social.following && (it.createdAt?.time ?: Long.MAX_VALUE) >= dayAgo }
+        .partition {
+            followingFirst && it.uid in social.following && (it.createdAt?.time ?: Long.MAX_VALUE) >= dayAgo
+        }
     val feedItems = buildList {
         if (followingPosts.isNotEmpty()) {
             add(FeedItem.Header("From people you follow", "Posted in the last day"))
@@ -209,10 +250,20 @@ fun FeedScreen(
     fun indexOfPost(id: String) = feedItems.indexOfFirst { it is FeedItem.Post && it.post.id == id }
 
     // Open the post from a pin's "View post" button once the feed has loaded.
-    LaunchedEffect(focusPostId, posts, loading, loadError) {
+    LaunchedEffect(focusPostId, posts, loading, loadError, selectedCategory, selectedDateFilter, showOnlyMine) {
         val target = focusPostId ?: return@LaunchedEffect
         if (loading || loadError != null) return@LaunchedEffect
         val index = indexOfPost(target)
+
+        // The filters are hiding it: clear them, and this runs again with the post showing.
+        if (index < 0 && posts.any { it.id == target } &&
+            (selectedCategory != "All" || selectedDateFilter != "Newest" || showOnlyMine)
+        ) {
+            selectedCategory = "All"
+            selectedDateFilter = "Newest"
+            showOnlyMine = false
+            return@LaunchedEffect
+        }
         if (index < 0) {
 
             // The list may still be catching up with the server. If it updates, this starts over.
@@ -268,6 +319,16 @@ fun FeedScreen(
             },
         )
 
+        FeedFilterBar(
+            selectedCategory = selectedCategory,
+            onCategoryChange = { selectedCategory = it },
+            selectedDateFilter = selectedDateFilter,
+            onDateFilterChange = { selectedDateFilter = it },
+            showOnlyMine = showOnlyMine,
+            onShowOnlyMineChange = { showOnlyMine = it },
+            canFilterMine = myUid != null,
+        )
+
         when {
             loadError != null -> FeedStatus(
                 message = loadError,
@@ -276,7 +337,9 @@ fun FeedScreen(
             )
             loading -> FeedStatus(modifier = Modifier.weight(1f))
             feedItems.isEmpty() -> FeedStatus(
-                message = if (session.hasAccount) {
+                message = if (posts.isNotEmpty()) {
+                    "No posts match these filters."
+                } else if (session.hasAccount) {
                     "No posts yet.\nTap Post to share a photo from your gallery or write a text post."
                 } else {
                     "No posts yet.\nLog in or sign up to share your finds."
@@ -431,6 +494,116 @@ private fun FeedHeader(canPost: Boolean, onPost: () -> Unit) {
     }
 }
 
+@Composable
+private fun FeedFilterBar(
+    selectedCategory: String,
+    onCategoryChange: (String) -> Unit,
+    selectedDateFilter: String,
+    onDateFilterChange: (String) -> Unit,
+    showOnlyMine: Boolean,
+    onShowOnlyMineChange: (Boolean) -> Unit,
+    canFilterMine: Boolean,
+) {
+    val dateOptions = listOf("Newest", "Oldest", "Today", "This Week")
+    val categories = listOf("All") + POST_CATEGORIES
+    var categoryMenuOpen by remember { mutableStateOf(false) }
+    var dateMenuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Category dropdown chip
+        Box {
+            FilterChip(
+                selected = selectedCategory != "All",
+                onClick = { categoryMenuOpen = true },
+                label = { Text("Category: $selectedCategory ▾") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Turquoise,
+                    selectedLabelColor = Color.White,
+                ),
+            )
+            DropdownMenu(
+                expanded = categoryMenuOpen,
+                onDismissRequest = { categoryMenuOpen = false },
+            ) {
+                categories.forEach { category ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = category,
+                                fontWeight = if (selectedCategory.equals(category, ignoreCase = true)) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            )
+                        },
+                        onClick = {
+                            onCategoryChange(category)
+                            categoryMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+
+        // Date dropdown chip
+        Box {
+            FilterChip(
+                selected = selectedDateFilter != "Newest",
+                onClick = { dateMenuOpen = true },
+                label = { Text("Date: $selectedDateFilter ▾") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = LightGreen,
+                    selectedLabelColor = FeedText,
+                ),
+            )
+            DropdownMenu(
+                expanded = dateMenuOpen,
+                onDismissRequest = { dateMenuOpen = false },
+            ) {
+                dateOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = option,
+                                fontWeight = if (selectedDateFilter == option) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            )
+                        },
+                        onClick = {
+                            onDateFilterChange(option)
+                            dateMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+
+        // My Observations toggle chip
+        if (canFilterMine) {
+            FilterChip(
+                selected = showOnlyMine,
+                onClick = { onShowOnlyMineChange(!showOnlyMine) },
+                label = { Text("My Observations") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = LightGreen,
+                    selectedLabelColor = FeedText,
+                ),
+            )
+        }
+    }
+}
+
 // One post: author, title, photo, reactions, and a short preview of the description that trails off.
 // "Show more" opens the full description and the comments; "Show less" closes them again.
 @Composable
@@ -499,7 +672,7 @@ fun FeedPostCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(relativeTime(post.createdAt), color = FeedMuted, fontSize = 12.sp)
+                    Text("${relativeTime(post.createdAt)} · ${post.category}", color = FeedMuted, fontSize = 12.sp)
                 }
             }
 

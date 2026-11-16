@@ -255,19 +255,22 @@ service cloud.firestore {
     // Feed posts. A photo post's id is its photo's id, so each photo can be posted only once.
     match /posts/{postId} {
 
-      // Title is required. Lengths match the limits in PostRepository.kt.
+      // Title is required. Lengths match the limits in PostRepository.kt. The category (like "Plants")
+      // is optional, because older posts don't have one.
       function validText(data) {
         return data.title is string
           && data.title.trim().size() > 0
           && data.title.size() <= 100
           && data.description is string
-          && data.description.size() <= 2000;
+          && data.description.size() <= 2000
+          && data.get('category', 'Other') is string
+          && data.get('category', 'Other').size() <= 30;
       }
 
-      // The author can change the title and description, and nothing else about the post.
+      // The author can change the title, description, and category, and nothing else about the post.
       function isOwnerEdit() {
         return resource.data.uid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description', 'category'])
           && validText(request.resource.data);
       }
 
@@ -308,7 +311,7 @@ service cloud.firestore {
       // Post as yourself (with an account), starting with no reactions or comments.
       // You can only share your own photo.
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['uid', 'title', 'description', 'createdAt',
+        && request.resource.data.keys().hasOnly(['uid', 'title', 'description', 'category', 'createdAt',
             'photoId', 'storagePath', 'latitude', 'longitude', 'photoTakenAt',
             'likedBy', 'dislikedBy', 'commentCount'])
         && request.resource.data.uid == request.auth.uid

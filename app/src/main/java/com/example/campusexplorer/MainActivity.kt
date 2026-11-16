@@ -251,7 +251,19 @@ fun CampusExplorerApp() {
                             focusPhotoId = mapFocusPhotoId,
                             onFocusHandled = { mapFocusPhotoId = null },
                         )
-                        Feature.Camera -> CameraScreen(onMessage = showMessage, modifier = Modifier.fillMaxSize())
+                        Feature.Camera -> CameraScreen(
+                            onMessage = showMessage,
+                            modifier = Modifier.fillMaxSize(),
+
+                            // "Save & Post" saves the photo, then opens the new-post pop-up with it.
+                            // Guests only get "Save", since posting needs an account.
+                            onPostToFeed = if (session.hasAccount) {
+                                { photoId ->
+                                    feedComposePhotoId = photoId
+                                    nav.open(Feature.Feed)
+                                }
+                            } else null,
+                        )
                         Feature.Gallery -> GalleryScreen(
                             onMessage = showMessage,
                             modifier = Modifier.fillMaxSize(),

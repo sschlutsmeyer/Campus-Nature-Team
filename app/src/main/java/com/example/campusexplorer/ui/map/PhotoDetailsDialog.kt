@@ -4,14 +4,18 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -30,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -41,7 +46,10 @@ import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.POST_TITLE_MAX
 import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.PostRepository
-import com.example.campusexplorer.ui.feed.authorLabel
+import com.example.campusexplorer.ui.LocalNavigator
+import com.example.campusexplorer.ui.Turquoise
+import com.example.campusexplorer.ui.account.UserAvatar
+import com.example.campusexplorer.ui.account.rememberDisplayName
 import com.example.campusexplorer.ui.feed.userMessage
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
@@ -159,9 +167,34 @@ fun PhotoDetailsDialog(
         text = {
             Column {
 
+                // Someone else's pin: who posted it. Tap for their profile.
+                val authorUid = photo.uid
+                if (!isOwner && authorUid != null) {
+                    val nav = LocalNavigator.current
+                    Row(
+                        Modifier
+                            .padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = "View profile") {
+                                onDismiss()
+                                nav.openUser(authorUid)
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        UserAvatar(authorUid, 26.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Posted by ${rememberDisplayName(authorUid)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(" · View profile", style = MaterialTheme.typography.bodySmall, color = Turquoise)
+                    }
+                }
+
                 // Who can see this pin: other users only see it once it's posted.
                 val visibility = when {
-                    !isOwner -> "Posted by ${authorLabel(photo.uid, myUid)}"
+                    !isOwner -> null
                     !postChecked -> null
                     post != null -> "Posted to the feed: everyone can see this pin."
                     else -> "Private: only you can see this pin until you post it."

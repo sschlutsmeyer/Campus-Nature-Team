@@ -5,6 +5,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,12 +66,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -78,16 +78,22 @@ import androidx.compose.material3.FilterChipDefaults
 import com.example.campusexplorer.data.POST_CATEGORIES
 import com.example.campusexplorer.data.COMMENT_MAX
 import com.example.campusexplorer.data.FeedPost
-import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.PostComment
 import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.data.Reaction
+import com.example.campusexplorer.data.SocialRepository
 import com.example.campusexplorer.ui.CampusRed
 import com.example.campusexplorer.ui.LeafGreen
 import com.example.campusexplorer.ui.LightGreen
+import com.example.campusexplorer.ui.LocalNavigator
+import com.example.campusexplorer.ui.LocalSession
+import com.example.campusexplorer.ui.LocalSocial
 import com.example.campusexplorer.ui.PhotoImage
 import com.example.campusexplorer.ui.Turquoise
-import com.google.firebase.auth.FirebaseAuth
+import com.example.campusexplorer.ui.account.UserAvatar
+import com.example.campusexplorer.ui.account.fallbackName
+import com.example.campusexplorer.ui.account.rememberUserProfile
+import com.example.campusexplorer.ui.withAccount
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -100,6 +106,30 @@ private val StringSetSaver = Saver<Set<String>, ArrayList<String>>(
     save = { ArrayList(it) },
     restore = { it.toSet() },
 )
+
+// Posts newer than this from people you follow go at the top of the feed.
+private const val FOLLOWING_FIRST_MS = 24 * 60 * 60 * 1000L
+
+// A row in the feed: a post, or a heading between the sections.
+private sealed interface FeedItem {
+    val key: String
+
+    data class Header(val title: String, val subtitle: String?) : FeedItem {
+        override val key: String get() = "header:$title"
+    }
+
+    data class Post(val post: FeedPost) : FeedItem {
+        override val key: String get() = post.id
+    }
+}
+
+@Composable
+private fun FeedSectionHeader(header: FeedItem.Header) {
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 10.dp)) {
+        Text(header.title, color = LeafGreen, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        header.subtitle?.let { Text(it, color = FeedMuted, fontSize = 12.sp) }
+    }
+}
 
 // The Feed: everyone's posts, newest first. Only things posted here (with the Post button)
 // appear in the feed; saving a photo with the camera keeps it private until you post it.
@@ -121,8 +151,10 @@ fun FeedScreen(
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
-    val myUid by remember { PhotoRepository.observeUserId() }
-        .collectAsStateWithLifecycle(FirebaseAuth.getInstance().currentUser?.uid)
+    val session = LocalSession.current
+    val social = LocalSocial.current
+    val nav = LocalNavigator.current
+    val myUid = session.uid
 
     var posts by remember { mutableStateOf<List<FeedPost>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -197,11 +229,41 @@ fun FeedScreen(
         }
     }
 
+    // The posts the filters above allow, minus ones from people you've blocked or who've blocked you.
+    // With the usual "Newest" order, recent posts (from the last day) by people you follow come
+    // first, then everything else.
+    val dayAgo = System.currentTimeMillis() - FOLLOWING_FIRST_MS
+    val followingFirst = selectedDateFilter == "Newest" && !showOnlyMine
+    val (followingPosts, otherPosts) = filteredPosts
+        .filter { it.uid !in social.hidden }
+        .partition {
+            followingFirst && it.uid in social.following && (it.createdAt?.time ?: Long.MAX_VALUE) >= dayAgo
+        }
+    val feedItems = buildList {
+        if (followingPosts.isNotEmpty()) {
+            add(FeedItem.Header("From people you follow", "Posted in the last day"))
+            followingPosts.forEach { add(FeedItem.Post(it)) }
+            if (otherPosts.isNotEmpty()) add(FeedItem.Header("More posts", null))
+        }
+        otherPosts.forEach { add(FeedItem.Post(it)) }
+    }
+    fun indexOfPost(id: String) = feedItems.indexOfFirst { it is FeedItem.Post && it.post.id == id }
+
     // Open the post from a pin's "View post" button once the feed has loaded.
-    LaunchedEffect(focusPostId, posts, loading, loadError) {
+    LaunchedEffect(focusPostId, posts, loading, loadError, selectedCategory, selectedDateFilter, showOnlyMine) {
         val target = focusPostId ?: return@LaunchedEffect
         if (loading || loadError != null) return@LaunchedEffect
-        val index = posts.indexOfFirst { it.id == target }
+        val index = indexOfPost(target)
+
+        // The filters are hiding it: clear them, and this runs again with the post showing.
+        if (index < 0 && posts.any { it.id == target } &&
+            (selectedCategory != "All" || selectedDateFilter != "Newest" || showOnlyMine)
+        ) {
+            selectedCategory = "All"
+            selectedDateFilter = "Newest"
+            showOnlyMine = false
+            return@LaunchedEffect
+        }
         if (index < 0) {
 
             // The list may still be catching up with the server. If it updates, this starts over.
@@ -225,7 +287,7 @@ fun FeedScreen(
     // Show a just-published post.
     LaunchedEffect(scrollToPostId, posts) {
         val target = scrollToPostId ?: return@LaunchedEffect
-        val index = posts.indexOfFirst { it.id == target }
+        val index = indexOfPost(target)
         if (index >= 0) {
             listState.animateScrollToItem(index)
             scrollToPostId = null
@@ -250,8 +312,10 @@ fun FeedScreen(
         FeedHeader(
             canPost = myUid != null,
             onPost = {
-                composeWithPhotoId = null
-                composing = true
+                nav.withAccount(session, "post to the feed") {
+                    composeWithPhotoId = null
+                    composing = true
+                }
             },
         )
 
@@ -272,8 +336,14 @@ fun FeedScreen(
                 onRetry = { retry++ },
             )
             loading -> FeedStatus(modifier = Modifier.weight(1f))
-            posts.isEmpty() -> FeedStatus(
-                message = "No posts yet.\nTap Post to share a photo from your gallery or write a text post.",
+            feedItems.isEmpty() -> FeedStatus(
+                message = if (posts.isNotEmpty()) {
+                    "No posts match these filters."
+                } else if (session.hasAccount) {
+                    "No posts yet.\nTap Post to share a photo from your gallery or write a text post."
+                } else {
+                    "No posts yet.\nLog in or sign up to share your finds."
+                },
                 modifier = Modifier.weight(1f),
             )
             else -> LazyColumn(
@@ -281,7 +351,12 @@ fun FeedScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 16.dp),
             ) {
-                items(posts, key = { it.id }) { post ->
+                items(feedItems, key = { it.key }) { item ->
+                    if (item is FeedItem.Header) {
+                        FeedSectionHeader(item)
+                        return@items
+                    }
+                    val post = (item as FeedItem.Post).post
                     FeedPostCard(
                         post = post,
                         myUid = myUid,
@@ -293,10 +368,12 @@ fun FeedScreen(
                         onBookmark = {
                             scope.launch {
                                 try {
-                                    android.util.Log.d("AUTH_TEST", "Current user ID: ${com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid}")
                                     PostRepository.toggleBookmark(post)
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
-                                    onMessage(userMessage(e, fallback = "Could not update bookmark"))
+                                    Log.w(TAG, "Couldn't update bookmark on ${post.id}", e)
+                                    onMessage(userMessage(e, fallback = "Couldn't update the bookmark."))
                                 }
                             }
                         },
@@ -556,8 +633,18 @@ fun FeedPostCard(
         else -> Reaction.NONE
     }
 
+    val session = LocalSession.current
+    val social = LocalSocial.current
+    val nav = LocalNavigator.current
+    val author = rememberUserProfile(post.uid)
+
     // Set by the Comment button so the comment box gets the keyboard once it appears.
     var focusCommentBox by remember { mutableStateOf(false) }
+
+    // Guests can see reactions but need an account to add their own.
+    val react: (Reaction) -> Unit = { reaction ->
+        nav.withAccount(session, "like and dislike posts") { onReact(reaction) }
+    }
 
     Column(modifier.fillMaxWidth().animateContentSize()) {
         Row(
@@ -565,10 +652,54 @@ fun FeedPostCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Avatar(40.dp)
-            Column(Modifier.weight(1f)) {
-                Text(authorLabel(post.uid, myUid), color = FeedText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text("${relativeTime(post.createdAt)} · ${post.category}", color = FeedMuted, fontSize = 12.sp)
+
+            // Tap the author for their profile.
+            Row(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClickLabel = "View profile") { nav.openUser(post.uid) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                UserAvatar(post.uid, 40.dp, profile = author)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        author?.username ?: fallbackName(post.uid),
+                        color = FeedText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text("${relativeTime(post.createdAt)} · ${post.category}", color = FeedMuted, fontSize = 12.sp)
+                }
+            }
+
+            // Follow the author right from their post.
+            if (!isMine && author != null && session.hasAccount && post.uid !in social.following) {
+                var following by remember(post.uid) { mutableStateOf(false) }
+                val followScope = rememberCoroutineScope()
+                TextButton(
+                    enabled = !following,
+                    onClick = {
+                        following = true
+                        followScope.launch {
+                            try {
+                                SocialRepository.follow(post.uid)
+                                onMessage("Following ${author.username}")
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Couldn't follow ${post.uid}", e)
+                                onMessage(userMessage(e, "Couldn't follow ${author.username}."))
+                            } finally {
+                                following = false
+                            }
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                ) { Text("Follow", color = Turquoise, fontWeight = FontWeight.SemiBold) }
             }
             if (isMine && (onEdit != null || onDelete != null)) PostMenu(onEdit, onDelete)
         }
@@ -598,7 +729,7 @@ fun FeedPostCard(
                 tint = if (myReaction == Reaction.LIKE) Turquoise else FeedMuted,
                 selected = myReaction == Reaction.LIKE,
                 enabled = myUid != null,
-                onClick = { onReact(if (myReaction == Reaction.LIKE) Reaction.NONE else Reaction.LIKE) },
+                onClick = { react(if (myReaction == Reaction.LIKE) Reaction.NONE else Reaction.LIKE) },
             )
             FeedAction(
                 icon = ThumbIcon,
@@ -608,7 +739,7 @@ fun FeedPostCard(
                 tint = if (myReaction == Reaction.DISLIKE) CampusRed else FeedMuted,
                 selected = myReaction == Reaction.DISLIKE,
                 enabled = myUid != null,
-                onClick = { onReact(if (myReaction == Reaction.DISLIKE) Reaction.NONE else Reaction.DISLIKE) },
+                onClick = { react(if (myReaction == Reaction.DISLIKE) Reaction.NONE else Reaction.DISLIKE) },
             )
             FeedAction(
                 icon = CommentIcon,
@@ -616,7 +747,7 @@ fun FeedPostCard(
                 description = "Comment",
                 onClick = {
                     onExpandedChange(true)
-                    focusCommentBox = true
+                    focusCommentBox = session.hasAccount
                 },
             )
             FeedAction(
@@ -676,6 +807,9 @@ private fun PostComments(
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
+    val session = LocalSession.current
+    val social = LocalSocial.current
+    val nav = LocalNavigator.current
     var comments by remember(post.id) { mutableStateOf<List<PostComment>>(emptyList()) }
     var loading by remember(post.id) { mutableStateOf(true) }
     var failed by remember(post.id) { mutableStateOf(false) }
@@ -716,7 +850,10 @@ private fun PostComments(
         onCommentBoxFocused()
     }
 
-    val canSend = myUid != null && draft.isNotBlank()
+    // Comments from people you've blocked, or who've blocked you, are hidden.
+    val shown = comments.filter { it.uid !in social.hidden }
+
+    val canSend = session.hasAccount && draft.isNotBlank()
     val send: () -> Unit = {
         val text = draft.trim()
         if (canSend) {
@@ -742,7 +879,7 @@ private fun PostComments(
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
         HorizontalDivider(color = LightGreen)
         Text(
-            if (comments.isEmpty()) "Comments" else "Comments (${comments.size})",
+            if (shown.isEmpty()) "Comments" else "Comments (${shown.size})",
             color = FeedText,
             fontWeight = FontWeight.SemiBold,
             fontSize = 15.sp,
@@ -759,25 +896,31 @@ private fun PostComments(
                 strokeWidth = 2.dp,
                 modifier = Modifier.padding(vertical = 8.dp).size(20.dp),
             )
-            comments.isEmpty() -> Text(
+            shown.isEmpty() -> Text(
                 "No comments yet. Start the conversation!",
                 color = FeedMuted,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(vertical = 4.dp),
             )
-            else -> comments.forEach { comment ->
+            else -> shown.forEach { comment ->
                 CommentRow(
                     comment = comment,
-                    myUid = myUid,
 
                     // You can delete your own comments, and any comment on your own post.
                     canDelete = myUid != null && (comment.uid == myUid || post.uid == myUid),
                     onDelete = { confirmingDelete = comment },
+                    onOpenAuthor = { nav.openUser(comment.uid) },
                 )
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Guests can read comments; writing one needs an account.
+        if (!session.hasAccount) {
+            OutlinedButton(
+                onClick = { nav.requireAccount("comment on posts") },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) { Text("Log in to comment", color = Turquoise) }
+        } else Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it.take(COMMENT_MAX) },
@@ -836,15 +979,27 @@ private fun PostComments(
     }
 }
 
-// One comment: who wrote it, when, and what it says.
+// One comment: who wrote it (tap for their profile), when, and what it says.
 @Composable
-private fun CommentRow(comment: PostComment, myUid: String?, canDelete: Boolean, onDelete: () -> Unit) {
+private fun CommentRow(comment: PostComment, canDelete: Boolean, onDelete: () -> Unit, onOpenAuthor: () -> Unit) {
+    val author = rememberUserProfile(comment.uid)
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
-        Avatar(28.dp)
+        UserAvatar(
+            comment.uid,
+            28.dp,
+            profile = author,
+            modifier = Modifier.clickable(onClickLabel = "View profile", onClick = onOpenAuthor),
+        )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(authorLabel(comment.uid, myUid), color = FeedText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    author?.username ?: fallbackName(comment.uid),
+                    color = FeedText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable(onClickLabel = "View profile", onClick = onOpenAuthor),
+                )
                 Text(" · ${relativeTime(comment.createdAt)}", color = FeedMuted, fontSize = 12.sp)
             }
             Text(comment.text, color = FeedText, fontSize = 14.sp, lineHeight = 19.sp)
@@ -915,13 +1070,6 @@ private fun FeedAction(
         Icon(icon, contentDescription = description, modifier = Modifier.size(22.dp).rotate(iconRotation))
         Spacer(Modifier.width(5.dp))
         Text(text, fontSize = 14.sp)
-    }
-}
-
-@Composable
-private fun Avatar(size: Dp) {
-    Box(Modifier.size(size).background(LightGreen, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(LeafIcon, contentDescription = null, tint = LeafGreen, modifier = Modifier.size(size * 0.6f))
     }
 }
 

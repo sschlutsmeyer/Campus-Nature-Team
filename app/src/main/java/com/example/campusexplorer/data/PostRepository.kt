@@ -30,7 +30,7 @@ data class FeedPost(
     val uid: String,
     val title: String,
     val description: String,
-    val category: String = "Other,",
+    val category: String = "Other",
     val createdAt: Date?,
 
     // The shared photo's id, or null for a text-only post. A photo post's id is the same as its
@@ -115,15 +115,21 @@ object PostRepository {
         awaitClose { registration.remove() }
     }
 
-    fun observeBookmarkedPosts(): Flow<List<FeedPost>> = callbackFlow {
-        val uid = PhotoRepository.ensureSignedIn()
-        val registration = posts
-            .whereArrayContains("bookmarkedBy", uid) // <--- THIS IS THE MAGIC FILTER
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener { snapshot, error ->
-                // ... same listener logic as your observePosts() function ...
+    // Live list of one user's posts, newest first (for their profile). Sorted here to avoid needing
+    // a composite index.
+    fun observeUserPosts(uid: String): Flow<List<FeedPost>> = callbackFlow {
+        PhotoRepository.ensureSignedIn()
+        val registration = posts.whereEqualTo("uid", uid).addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.w(TAG, "Post listener for user $uid failed", error)
+                close(error)
+                return@addSnapshotListener
             }
-        // ...
+            val list = snapshot?.documents.orEmpty().mapNotNull(::toPost)
+                .sortedByDescending { it.createdAt?.time ?: Long.MAX_VALUE }
+            trySend(list)
+        }
+        awaitClose { registration.remove() }
     }
 
     // Live view of one post, or null if it doesn't exist (or was deleted).
@@ -150,7 +156,7 @@ object PostRepository {
         // Text-only post: a new id and nothing else to update.
         if (photo == null) {
             val postRef = posts.document()
-            postRef.set(newPostData(uid, cleanTitle, cleanDescription, photo = null)).await()
+            postRef.set(newPostData(uid, cleanTitle, cleanDescription, photo = null, category = category)).await()
             return postRef.id
         }
 
@@ -164,7 +170,7 @@ object PostRepository {
             val current = transaction.get(photoRef)
             check(current.exists()) { "This photo was deleted." }
 
-            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo))
+            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo, category))
             if (current.getString("caption") != cleanTitle) {
                 transaction.update(photoRef, "caption", cleanTitle)
             }

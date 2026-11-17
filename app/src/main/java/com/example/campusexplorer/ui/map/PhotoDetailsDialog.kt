@@ -4,52 +4,39 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.campusexplorer.data.FeedPost
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.POST_TITLE_MAX
 import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.PostRepository
+import com.example.campusexplorer.ui.CampusRed
+import com.example.campusexplorer.ui.LightGreen
 import com.example.campusexplorer.ui.LocalNavigator
 import com.example.campusexplorer.ui.Turquoise
 import com.example.campusexplorer.ui.account.UserAvatar
 import com.example.campusexplorer.ui.account.rememberDisplayName
+import com.example.campusexplorer.ui.feed.CloseIcon
 import com.example.campusexplorer.ui.feed.userMessage
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
@@ -60,8 +47,9 @@ import kotlinx.coroutines.withContext
 // Label for this file's messages in Logcat.
 private const val TAG = "PhotoDetailsDialog"
 
-// Pop-up that shows one photo, with View post / Post to feed, Edit Name, Delete, Retry, and Close buttons.
+// Bottom sheet for a map pin: photo, post actions, rename, delete, and retry.
 // Only the photo's owner can rename or delete it.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotoDetailsDialog(
     photo: NaturePhoto,
@@ -156,154 +144,168 @@ fun PhotoDetailsDialog(
     }
 
     val busy = savingName || deleting
+    val currentBusy by rememberUpdatedState(busy)
+    var closing by remember(photo.id) { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        // Keep the sheet open until a save/delete operation has finished.
+        confirmValueChange = { value -> value != SheetValue.Hidden || !currentBusy },
+    )
+    val pinText = Color(0xFF294C39)
+    val mutedText = Color(0xFF65756C)
+    val actionsEnabled = !busy && !closing
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = {
-            Text(displayedCaption.ifBlank { "Nature photo" })
-        },
+        sheetState = sheetState,
+        modifier = Modifier.fillMaxHeight(0.9f),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = Color.White,
+        contentColor = pinText,
+        scrimColor = Color.Black.copy(alpha = 0.4f),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // Fixed header, matching the Learn species details sheet.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+                    .padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    displayedCaption.ifBlank { "Nature photo" },
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    color = pinText,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                IconButton(
+                    enabled = actionsEnabled,
+                    onClick = {
+                        closing = true
+                        scope.launch {
+                            try {
+                                sheetState.hide()
+                                if (!sheetState.isVisible) onDismiss()
+                            } finally {
+                                closing = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.size(40.dp)
+                        .background(Color(0xFFF0F2F0), CircleShape),
+                ) {
+                    Icon(CloseIcon, contentDescription = "Close pin details", tint = Color.DarkGray)
+                }
+            }
 
-        // Show a spinner, the error, or the photo.
-        text = {
-            Column {
-
-                // Someone else's pin: who posted it. Tap for their profile.
+            Column(
+                modifier = Modifier.fillMaxWidth().weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Keep the incoming profile link for other users' pins.
                 val authorUid = photo.uid
                 if (!isOwner && authorUid != null) {
                     val nav = LocalNavigator.current
                     Row(
-                        Modifier
-                            .padding(bottom = 8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClickLabel = "View profile") {
+                        Modifier.clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = actionsEnabled, onClickLabel = "View profile") {
                                 onDismiss()
                                 nav.openUser(authorUid)
-                            },
+                            }.padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         UserAvatar(authorUid, 26.dp)
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Posted by ${rememberDisplayName(authorUid)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(" · View profile", style = MaterialTheme.typography.bodySmall, color = Turquoise)
+                        Text("Posted by ${rememberDisplayName(authorUid)}",
+                            color = mutedText, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text("View profile", color = Turquoise, fontSize = 12.sp)
                     }
                 }
 
-                // Who can see this pin: other users only see it once it's posted.
                 val visibility = when {
-                    !isOwner -> null
-                    !postChecked -> null
+                    !isOwner || !postChecked -> null
                     post != null -> "Posted to the feed: everyone can see this pin."
                     else -> "Private: only you can see this pin until you post it."
                 }
                 if (visibility != null) {
-                    Text(
-                        visibility,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
+                    Text(visibility, color = mutedText, fontSize = 12.sp, lineHeight = 18.sp)
+                }
+
+                val image = bitmap
+                if (!loading && error == null && image != null) {
+                    Image(
+                        bitmap = image.asImageBitmap(),
+                        contentDescription = displayedCaption.ifBlank { "Saved nature photo" },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth()
+                            .aspectRatio(image.width.toFloat() / image.height.coerceAtLeast(1))
+                            .clip(RoundedCornerShape(16.dp)),
                     )
-                }
-
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(280.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val image = bitmap
-
-                    when {
-                        loading -> CircularProgressIndicator()
-
-                        error != null -> Text(
-                            text = error.orEmpty(),
-                            textAlign = TextAlign.Center,
-                        )
-
-                        image != null -> Image(
-                            bitmap = image.asImageBitmap(),
-                            contentDescription = displayedCaption.ifBlank {
-                                "Saved nature photo"
-                            },
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val currentPost = post
-
-                    // Posted: jump to the post in the feed, opened up with its comments.
-                    if (currentPost != null && onViewPost != null) {
-                        Button(
-                            enabled = !busy,
-                            onClick = {
-                                onDismiss()
-                                onViewPost(currentPost.id)
-                            },
-                        ) { Text("View post") }
-
-                        // Your photo, not posted yet: start a post with it.
-                    } else if (postChecked && currentPost == null && isOwner && onCreatePost != null) {
-                        OutlinedButton(
-                            enabled = !busy,
-                            onClick = {
-                                onDismiss()
-                                onCreatePost(photo.copy(caption = displayedCaption))
-                            },
-                        ) { Text("Post to feed") }
-                    }
-
-                    if (isOwner) {
-                        TextButton(
-                            enabled = !busy,
-                            onClick = {
-                                nameDraft = displayedCaption
-                                nameError = null
-                                editingName = true
-                            },
-                        ) { Text("Edit Name") }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) {
-                Text("Close")
-            }
-        },
-        dismissButton = {
-            Row {
-
-                // Red Delete button, for your own photos. Asks before deleting.
-                if (isOwner) {
-                    TextButton(
-                        onClick = { confirmingDelete = true },
-                        enabled = !busy,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error,
-                        ),
+                } else {
+                    Box(
+                        Modifier.fillMaxWidth().height(240.dp)
+                            .clip(RoundedCornerShape(16.dp)).background(LightGreen),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(if (deleting) "Deleting…" else "Delete")
+                        if (loading) {
+                            CircularProgressIndicator(color = Turquoise)
+                        } else {
+                            Text(error ?: "No image was found for this photo.",
+                                color = mutedText, textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(16.dp))
+                        }
                     }
                 }
 
-                // Retry only shows after a failed download.
                 if (error != null && !loading) {
-                    TextButton(onClick = { retryCount++ }) {
-                        Text("Retry")
-                    }
+                    OutlinedButton(
+                        enabled = actionsEnabled,
+                        onClick = { retryCount++ },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Retry photo", color = Turquoise) }
+                }
+
+                val currentPost = post
+                if (currentPost != null && onViewPost != null) {
+                    Button(
+                        enabled = actionsEnabled,
+                        onClick = { onDismiss(); onViewPost(currentPost.id) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Turquoise,
+                            contentColor = Color.White),
+                    ) { Text("View post") }
+                } else if (postChecked && currentPost == null && isOwner && onCreatePost != null) {
+                    Button(
+                        enabled = actionsEnabled,
+                        onClick = { onDismiss(); onCreatePost(photo.copy(caption = displayedCaption)) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Turquoise,
+                            contentColor = Color.White),
+                    ) { Text("Post to feed") }
+                }
+
+                if (isOwner) {
+                    OutlinedButton(
+                        enabled = actionsEnabled,
+                        onClick = {
+                            nameDraft = displayedCaption
+                            nameError = null
+                            editingName = true
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Edit name", color = Turquoise) }
+                    TextButton(
+                        enabled = actionsEnabled,
+                        onClick = { confirmingDelete = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = CampusRed),
+                    ) { Text(if (deleting) "Deleting…" else "Delete photo") }
                 }
             }
-        },
-    )
+        }
+    }
 
     if (editingName) {
         AlertDialog(
@@ -376,7 +378,7 @@ fun PhotoDetailsDialog(
                 Text(
                     if (post != null) {
                         "This removes the photo and its feed post (with its likes and comments) " +
-                            "for everyone, and can't be undone."
+                                "for everyone, and can't be undone."
                     } else {
                         "This removes the photo for good and can't be undone."
                     }

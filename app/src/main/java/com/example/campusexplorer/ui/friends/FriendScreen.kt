@@ -19,7 +19,6 @@ import com.example.campusexplorer.ui.account.rememberUserProfile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @Composable
@@ -78,6 +77,13 @@ fun FriendScreen(
         mutableStateOf("Friends")
     }
 
+    // Fall back to Friends if Android restores a tab removed by an app update.
+    LaunchedEffect(tab) {
+        if (tab !in listOf("Friends", "Requests", "Search", "Blocked")) {
+            tab = "Friends"
+        }
+    }
+
     var query by rememberSaveable(me) {
         mutableStateOf("")
     }
@@ -123,32 +129,6 @@ fun FriendScreen(
         }
     }.collectAsStateWithLifecycle(emptyMap())
 
-    val sharedArea by remember(me) {
-        FriendDetailsRepository.area(me).catch {
-            onMessage("Couldn't load area settings.")
-            emit("")
-        }
-    }.collectAsStateWithLifecycle("")
-
-    var areaInput by rememberSaveable(me) {
-        mutableStateOf("")
-    }
-
-    LaunchedEffect(sharedArea) {
-        areaInput = sharedArea
-    }
-
-    val nearby by remember(sharedArea, me) {
-        if (sharedArea.isBlank()) {
-            flowOf(emptyList<String>())
-        } else {
-            FriendDetailsRepository.peopleIn(sharedArea).catch {
-                onMessage("Couldn't load people in this area.")
-                emit(emptyList())
-            }
-        }
-    }.collectAsStateWithLifecycle(emptyList())
-
     var noteUid by rememberSaveable(me) {
         mutableStateOf<String?>(null)
     }
@@ -167,7 +147,6 @@ fun FriendScreen(
                     social.outgoingRequests.map { it.to }
 
         "Search" -> results.map { it.uid }
-        "Nearby" -> nearby
         "Blocked" -> social.blockedByMe.toList()
         else -> social.friends.toList()
     }.distinct().filter {
@@ -193,7 +172,6 @@ fun FriendScreen(
                 "Friends",
                 "Requests",
                 "Search",
-                "Nearby",
                 "Blocked"
             ).forEach { name ->
                 FilterChip(
@@ -233,49 +211,6 @@ fun FriendScreen(
             )
         }
 
-        if (tab == "Nearby") {
-            Text(
-                "Find people who opt in with the same city or campus name. " +
-                        "Your area is visible to signed-in users. " +
-                        "No GPS is shared. Up to 100 people are shown."
-            )
-
-            OutlinedTextField(
-                value = areaInput,
-                onValueChange = { areaInput = it.take(80) },
-                label = {
-                    Text("City or campus, e.g. CSU Channel Islands")
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Row {
-                TextButton(
-                    enabled = !busy && areaInput.trim().length >= 2,
-                    onClick = {
-                        action("Area saved") {
-                            FriendDetailsRepository.shareArea(areaInput)
-                        }
-                    }
-                ) {
-                    Text("Share area & find people")
-                }
-
-                if (sharedArea.isNotBlank()) {
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            action("Area sharing stopped") {
-                                FriendDetailsRepository.stopSharing()
-                            }
-                        }
-                    ) {
-                        Text("Stop sharing")
-                    }
-                }
-            }
-        }
-
         if (searching) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
@@ -305,14 +240,6 @@ fun FriendScreen(
                             }
 
                             "Requests" -> "No pending friend requests."
-
-                            "Nearby" -> {
-                                if (sharedArea.isBlank()) {
-                                    "Share an area to join discovery."
-                                } else {
-                                    "No other people sharing this area yet."
-                                }
-                            }
 
                             "Blocked" -> "No blocked people."
 

@@ -76,10 +76,10 @@ enum class Feature(
 
     Friends(
         title = "Friends",
-        emoji = "👥",
+        emoji = "🌳",
         subtitle = "Find people and keep in touch",
         keywords = listOf(
-            "friends", "people", "nearby", "requests", "notes", "block"
+            "friends", "people", "requests", "notes", "block"
         )
     ),
 

@@ -72,6 +72,7 @@ import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.POST_DESCRIPTION_MAX
 import com.example.campusexplorer.data.POST_TITLE_MAX
 import com.example.campusexplorer.data.PhotoRepository
+import com.example.campusexplorer.data.PostIdentification
 import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.ui.CampusRed
 import com.example.campusexplorer.ui.LightGreen
@@ -117,6 +118,10 @@ fun CreatePostDialog(
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var category by rememberSaveable { mutableStateOf("Other") }
+    var identification by rememberSaveable(saver = PostIdentificationStateSaver) {
+        mutableStateOf<PostIdentification?>(null)
+    }
+    var pendingSpeciesSearch by remember { mutableStateOf(false) }
 
     // True once you type your own title, so choosing a different photo doesn't replace it.
     var titleEdited by rememberSaveable { mutableStateOf(false) }
@@ -185,7 +190,7 @@ fun CreatePostDialog(
         error = null
         scope.launch {
             try {
-                onPosted(PostRepository.createPost(title, description, selectedPhoto, category))
+                onPosted(PostRepository.createPost(title, description, selectedPhoto, category, identification))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -239,6 +244,13 @@ fun CreatePostDialog(
                         onDescriptionChange = { description = it },
                         category = category,
                         onCategoryChange = { category = it },
+                        identification = identification,
+                        onIdentificationChange = {
+                            identification = it
+                            category = it?.category ?: "Other"
+                        },
+                        pendingSpeciesSearch = pendingSpeciesSearch,
+                        onPendingSearchChange = { pendingSpeciesSearch = it },
                         posting = posting,
                         error = error,
                         onChangePhoto = goBack,
@@ -257,12 +269,16 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
     var title by rememberSaveable(post.id) { mutableStateOf(post.title) }
     var description by rememberSaveable(post.id) { mutableStateOf(post.description) }
     var category by rememberSaveable(post.id) { mutableStateOf(post.category) }
+    var identification by rememberSaveable(post.id, saver = PostIdentificationStateSaver) {
+        mutableStateOf(post.identification)
+    }
+    var pendingSpeciesSearch by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val changed = title.trim() != post.title ||
             description.trim() != post.description ||
-            category != post.category
+            category != post.category || identification != post.identification
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -290,7 +306,16 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                CategorySelector(
+                PostSpeciesFields(
+                    identification = identification,
+                    onIdentificationChange = {
+                        identification = it
+                        category = it?.category ?: "Other"
+                    },
+                    onPendingSearchChange = { pendingSpeciesSearch = it },
+                    enabled = !saving,
+                )
+                if (identification == null) CategorySelector(
                     selectedCategory = category,
                     onCategoryChange = { category = it },
                     enabled = !saving,
@@ -311,13 +336,13 @@ fun EditPostDialog(post: FeedPost, onDismiss: () -> Unit, onSaved: () -> Unit) {
         },
         confirmButton = {
             TextButton(
-                enabled = !saving && changed && title.isNotBlank(),
+                enabled = !saving && !pendingSpeciesSearch && changed && title.isNotBlank(),
                 onClick = {
                     saving = true
                     error = null
                     scope.launch {
                         try {
-                            PostRepository.updatePost(post, title, description, category)
+                            PostRepository.updatePost(post, title, description, category, identification)
                             onSaved()
                         } catch (e: CancellationException) {
                             throw e
@@ -521,6 +546,10 @@ private fun PostForm(
     onDescriptionChange: (String) -> Unit,
     category: String,
     onCategoryChange: (String) -> Unit,
+    identification: PostIdentification?,
+    onIdentificationChange: (PostIdentification?) -> Unit,
+    pendingSpeciesSearch: Boolean,
+    onPendingSearchChange: (Boolean) -> Unit,
     posting: Boolean,
     error: String?,
     onChangePhoto: () -> Unit,
@@ -581,7 +610,13 @@ private fun PostForm(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        CategorySelector(
+        PostSpeciesFields(
+            identification = identification,
+            onIdentificationChange = onIdentificationChange,
+            onPendingSearchChange = onPendingSearchChange,
+            enabled = !posting,
+        )
+        if (identification == null) CategorySelector(
             selectedCategory = category,
             onCategoryChange = onCategoryChange,
             enabled = !posting,
@@ -605,7 +640,7 @@ private fun PostForm(
 
         Button(
             onClick = onPost,
-            enabled = !posting && !photoLoading && title.isNotBlank(),
+            enabled = !posting && !pendingSpeciesSearch && !photoLoading && title.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Turquoise, contentColor = Color.White),
         ) {

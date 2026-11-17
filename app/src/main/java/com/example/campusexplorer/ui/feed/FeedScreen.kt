@@ -30,8 +30,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -250,7 +248,7 @@ fun FeedScreen(
     fun indexOfPost(id: String) = feedItems.indexOfFirst { it is FeedItem.Post && it.post.id == id }
 
     // Open the post from a pin's "View post" button once the feed has loaded.
-    LaunchedEffect(focusPostId, posts, loading, loadError, selectedCategory, selectedDateFilter, showOnlyMine) {
+    LaunchedEffect(focusPostId, posts, feedItems, loading, loadError) {
         val target = focusPostId ?: return@LaunchedEffect
         if (loading || loadError != null) return@LaunchedEffect
         val index = indexOfPost(target)
@@ -285,7 +283,7 @@ fun FeedScreen(
     }
 
     // Show a just-published post.
-    LaunchedEffect(scrollToPostId, posts) {
+    LaunchedEffect(scrollToPostId, feedItems) {
         val target = scrollToPostId ?: return@LaunchedEffect
         val index = indexOfPost(target)
         if (index >= 0) {
@@ -408,6 +406,10 @@ fun FeedScreen(
             onPosted = { postId ->
                 composing = false
                 composeWithPhotoId = null
+                // Show the newly published post, even if a previous filter would hide it.
+                selectedCategory = "All"
+                selectedDateFilter = "Newest"
+                showOnlyMine = false
                 scrollToPostId = postId
                 onMessage("Posted to the feed!")
             },
@@ -433,7 +435,7 @@ fun FeedScreen(
                 Text(
                     if (post.photoId != null) {
                         "This removes the post and its likes and comments for everyone. Your photo " +
-                            "stays in your gallery and on your map, but other users won't see it."
+                                "stays in your gallery and on your map, but other users won't see it."
                     } else {
                         "This removes the post and its likes and comments for everyone."
                     }
@@ -720,6 +722,8 @@ fun FeedPostCard(
                 contentDescription = post.title,
             )
         }
+
+        post.identification?.let { PostIdentificationSummary(it) }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             FeedAction(

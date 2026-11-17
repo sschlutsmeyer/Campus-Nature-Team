@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,12 +36,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// The home squares, in order. To add a feature: add an entry here, then show its screen in MainActivity.
 enum class Feature(
     val title: String,
     val emoji: String,
     val subtitle: String,
     val keywords: List<String> = emptyList()
 ) {
+    // Shows "Log In / Sign Up" to guests and "View Profile" once logged in (see HomeScreen).
+    Account(
+        title = "Log In / Sign Up",
+        emoji = "🔑",
+        subtitle = "Your profile, friends, and followers",
+        keywords = listOf(
+            "login", "log in", "sign in", "sign up", "account", "profile", "view profile",
+            "friends", "followers", "following", "username", "password", "log out", "sign out"
+        )
+    ),
     Map(
         title = "Map",
         emoji = "🗺️",
@@ -58,6 +70,12 @@ enum class Feature(
         emoji = "📰",
         subtitle = "See what others have found",
         keywords = listOf("posts", "social")
+    ),
+    Messages(
+        title = "Messages",
+        emoji = "💬",
+        subtitle = "Chat with your friends",
+        keywords = listOf("chat", "dm", "direct messages", "inbox", "friends", "text")
     ),
     Gallery(
         title = "Gallery",
@@ -82,9 +100,32 @@ fun HomeScreen(
     val focusManager = LocalFocusManager.current
     val search = query.trim()
 
+    val session = LocalSession.current
+    val social = LocalSocial.current
+    val chats = LocalChats.current
+
+    // The Account square changes once you're logged in. Its guest title breaks after the slash so
+    // the square reads "Log In /" over "Sign Up".
+    fun titleOf(feature: Feature) = when {
+        feature != Feature.Account -> feature.title
+        session.needsUsername -> "Finish Sign Up"
+        session.isLoggedIn -> "View Profile"
+        else -> feature.title.replace("/ ", "/\n")
+    }
+
+    fun emojiOf(feature: Feature) =
+        if (feature == Feature.Account && session.isLoggedIn) "👤" else feature.emoji
+
+    // Little counts on the squares: unread chats, and friend requests to answer.
+    fun badgeOf(feature: Feature) = when (feature) {
+        Feature.Messages -> chats.count { it.unread && it.otherUid !in social.hidden }
+        Feature.Account -> social.incomingRequests.size
+        else -> 0
+    }
+
     val features = Feature.entries.filter { feature ->
         search.isEmpty() ||
-                feature.title.contains(search, ignoreCase = true) ||
+                titleOf(feature).replace('\n', ' ').contains(search, ignoreCase = true) ||
                 feature.keywords.any { keyword ->
                     keyword.contains(search, ignoreCase = true)
                 }
@@ -103,7 +144,7 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Welcome, [Insert User]",
+            text = session.profile?.username?.let { "Welcome, $it!" } ?: "Welcome, Guest!",
             modifier = Modifier.fillMaxWidth(),
             fontFamily = FontFamily.Serif,
             fontSize = 24.sp,
@@ -177,7 +218,9 @@ fun HomeScreen(
                     key = { feature -> feature.name }
                 ) { feature ->
                     FeatureTile(
-                        feature = feature,
+                        title = titleOf(feature),
+                        emoji = emojiOf(feature),
+                        badge = badgeOf(feature),
                         onClick = {
                             focusManager.clearFocus()
                             onFeatureSelected(feature)
@@ -346,43 +389,68 @@ private fun HeaderVines(
     }
 }
 
+// One square. badge is a count shown in a red circle in the corner (hidden when 0).
 @Composable
 private fun FeatureTile(
-    feature: Feature,
+    title: String,
+    emoji: String,
+    badge: Int,
     onClick: () -> Unit
 ) {
     val tileShape = RoundedCornerShape(24.dp)
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(tileShape)
-            .background(LightGreen)
-            .border(
-                width = 3.dp,
-                color = Turquoise,
-                shape = tileShape
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(tileShape)
+                .background(LightGreen)
+                .border(
+                    width = 3.dp,
+                    color = Turquoise,
+                    shape = tileShape
+                )
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = emoji,
+                fontSize = 44.sp
             )
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = feature.emoji,
-            fontSize = 44.sp
-        )
 
-        Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-        Text(
-            text = feature.title,
-            fontFamily = FontFamily.Serif,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = Turquoise,
-            textAlign = TextAlign.Center
-        )
+            Text(
+                text = title,
+                fontFamily = FontFamily.Serif,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Turquoise,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (badge > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .defaultMinSize(minWidth = 28.dp, minHeight = 28.dp)
+                    .clip(CircleShape)
+                    .background(CampusRed)
+                    .padding(horizontal = 7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (badge > 99) "99+" else badge.toString(),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }

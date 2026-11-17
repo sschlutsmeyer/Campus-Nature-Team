@@ -116,15 +116,21 @@ object PostRepository {
         awaitClose { registration.remove() }
     }
 
-    fun observeBookmarkedPosts(): Flow<List<FeedPost>> = callbackFlow {
-        val uid = PhotoRepository.ensureSignedIn()
-        val registration = posts
-            .whereArrayContains("bookmarkedBy", uid) // <--- THIS IS THE MAGIC FILTER
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener { snapshot, error ->
-                // ... same listener logic as your observePosts() function ...
+    // Live list of one user's posts, newest first (for their profile). Sorted here to avoid needing
+    // a composite index.
+    fun observeUserPosts(uid: String): Flow<List<FeedPost>> = callbackFlow {
+        PhotoRepository.ensureSignedIn()
+        val registration = posts.whereEqualTo("uid", uid).addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.w(TAG, "Post listener for user $uid failed", error)
+                close(error)
+                return@addSnapshotListener
             }
-        // ...
+            val list = snapshot?.documents.orEmpty().mapNotNull(::toPost)
+                .sortedByDescending { it.createdAt?.time ?: Long.MAX_VALUE }
+            trySend(list)
+        }
+        awaitClose { registration.remove() }
     }
 
     // Live view of one post, or null if it doesn't exist (or was deleted).

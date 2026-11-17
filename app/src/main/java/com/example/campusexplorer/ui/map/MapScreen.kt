@@ -63,7 +63,8 @@ import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.ui.CampusRed
 import com.example.campusexplorer.ui.PhotoImportHost
 import com.example.campusexplorer.ui.Turquoise
-import com.example.campusexplorer.ui.feed.authorLabel
+import com.example.campusexplorer.ui.LocalSocial
+import com.example.campusexplorer.ui.account.rememberDisplayName
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
@@ -129,9 +130,11 @@ fun MapScreen(
     }.collectAsStateWithLifecycle(emptyList())
 
     // Which of your photos are posted, and other users' posted photos (only when switched on).
+    // Pins from people you've blocked, or who've blocked you, are hidden.
+    val hidden = LocalSocial.current.hidden
     val myPostedIds = posts.filter { it.uid == uid }.mapTo(HashSet()) { it.id }
     val otherPhotos = if (showAllPins) {
-        posts.filter { it.uid != uid && it.hasLocation }.mapNotNull { it.photo }
+        posts.filter { it.uid != uid && it.hasLocation && it.uid !in hidden }.mapNotNull { it.photo }
     } else emptyList()
 
     // Everything in the list (your photos without a location too), newest first.
@@ -270,7 +273,7 @@ fun MapScreen(
                         val mine = photo.uid != null && photo.uid == uid
                         PhotoPinRow(
                             photo = photo,
-                            owner = authorLabel(photo.uid, uid),
+                            owner = if (mine) "You" else rememberDisplayName(photo.uid),
                             mine = mine,
                             posted = !mine || photo.id in myPostedIds,
                             onClick = { selectedPhoto = photo },

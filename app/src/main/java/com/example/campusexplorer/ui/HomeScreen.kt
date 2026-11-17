@@ -36,58 +36,76 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// The home squares, in order. To add a feature: add an entry here, then show its screen in MainActivity.
 enum class Feature(
     val title: String,
     val emoji: String,
     val subtitle: String,
     val keywords: List<String> = emptyList()
 ) {
-    // Shows "Log In / Sign Up" to guests and "View Profile" once logged in (see HomeScreen).
     Account(
         title = "Log In / Sign Up",
         emoji = "🔑",
         subtitle = "Your profile, friends, and followers",
         keywords = listOf(
-            "login", "log in", "sign in", "sign up", "account", "profile", "view profile",
-            "friends", "followers", "following", "username", "password", "log out", "sign out"
+            "login", "log in", "sign in", "sign up", "account",
+            "profile", "view profile", "friends", "followers",
+            "following", "username", "password", "log out", "sign out"
         )
     ),
+
     Map(
         title = "Map",
         emoji = "🗺️",
         subtitle = "Explore nature",
         keywords = listOf("pins", "location", "campus")
     ),
+
     Camera(
         title = "Camera",
         emoji = "📷",
         subtitle = "Discover your next nature find",
         keywords = listOf("photo", "picture", "cam")
     ),
+
     Feed(
         title = "Feed",
         emoji = "📰",
         subtitle = "See what others have found",
         keywords = listOf("posts", "social")
     ),
+
+    Friends(
+        title = "Friends",
+        emoji = "👥",
+        subtitle = "Find people and keep in touch",
+        keywords = listOf(
+            "friends", "people", "nearby", "requests", "notes", "block"
+        )
+    ),
+
     Messages(
         title = "Messages",
         emoji = "💬",
         subtitle = "Chat with your friends",
-        keywords = listOf("chat", "dm", "direct messages", "inbox", "friends", "text")
+        keywords = listOf(
+            "chat", "dm", "direct messages", "inbox", "friends", "text"
+        )
     ),
+
     Gallery(
         title = "Gallery",
         emoji = "🖼️",
         subtitle = "Browse your nature photos",
         keywords = listOf("photos", "pictures")
     ),
+
     Learn(
-    title = "Learn",
-    emoji = "📚",
-    subtitle = "Discover plants and wildlife",
-    keywords = listOf("species", "plants", "animals", "wildlife", "learn")
+        title = "Learn",
+        emoji = "📚",
+        subtitle = "Discover plants and wildlife",
+        keywords = listOf(
+            "species", "plants", "animals", "wildlife", "learn"
+        )
     )
 }
 
@@ -96,7 +114,10 @@ fun HomeScreen(
     onFeatureSelected: (Feature) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable {
+        mutableStateOf("")
+    }
+
     val focusManager = LocalFocusManager.current
     val search = query.trim()
 
@@ -104,8 +125,6 @@ fun HomeScreen(
     val social = LocalSocial.current
     val chats = LocalChats.current
 
-    // The Account square changes once you're logged in. Its guest title breaks after the slash so
-    // the square reads "Log In /" over "Sign Up".
     fun titleOf(feature: Feature) = when {
         feature != Feature.Account -> feature.title
         session.needsUsername -> "Finish Sign Up"
@@ -114,18 +133,29 @@ fun HomeScreen(
     }
 
     fun emojiOf(feature: Feature) =
-        if (feature == Feature.Account && session.isLoggedIn) "👤" else feature.emoji
+        if (feature == Feature.Account && session.isLoggedIn) {
+            "👤"
+        } else {
+            feature.emoji
+        }
 
-    // Little counts on the squares: unread chats, and friend requests to answer.
     fun badgeOf(feature: Feature) = when (feature) {
-        Feature.Messages -> chats.count { it.unread && it.otherUid !in social.hidden }
-        Feature.Account -> social.incomingRequests.size
+        Feature.Messages -> chats.count {
+            it.unread && it.otherUid !in social.hidden
+        }
+
+        Feature.Friends -> social.incomingRequests.count {
+            it.from !in social.hidden
+        }
+
         else -> 0
     }
 
     val features = Feature.entries.filter { feature ->
         search.isEmpty() ||
-                titleOf(feature).replace('\n', ' ').contains(search, ignoreCase = true) ||
+                titleOf(feature)
+                    .replace('\n', ' ')
+                    .contains(search, ignoreCase = true) ||
                 feature.keywords.any { keyword ->
                     keyword.contains(search, ignoreCase = true)
                 }
@@ -137,14 +167,16 @@ fun HomeScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
         NatureNetworkHeader()
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
         Text(
-            text = session.profile?.username?.let { "Welcome, $it!" } ?: "Welcome, Guest!",
+            text = session.profile?.username?.let {
+                "Welcome, $it!"
+            } ?: "Welcome, Guest!",
             modifier = Modifier.fillMaxWidth(),
             fontFamily = FontFamily.Serif,
             fontSize = 24.sp,
@@ -153,17 +185,17 @@ fun HomeScreen(
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth(),
             placeholder = {
-                Text(text = "Search features")
+                Text("Search features")
             },
             leadingIcon = {
-                Text(text = "🔍")
+                Text("🔍")
             },
             trailingIcon = {
                 if (query.isNotEmpty()) {
@@ -194,7 +226,7 @@ fun HomeScreen(
             )
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
         if (features.isEmpty()) {
             Text(
@@ -215,7 +247,7 @@ fun HomeScreen(
             ) {
                 items(
                     items = features,
-                    key = { feature -> feature.name }
+                    key = { it.name }
                 ) { feature ->
                     FeatureTile(
                         title = titleOf(feature),
@@ -278,7 +310,7 @@ private fun NatureNetworkHeader() {
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text = "CSU Channel Islands",
@@ -306,6 +338,7 @@ private fun HeaderVines(
 
         for (side in 0..1) {
             val direction = if (side == 0) 1f else -1f
+
             val baseX = if (side == 0) {
                 inset
             } else {
@@ -333,6 +366,7 @@ private fun HeaderVines(
 
             for (index in 1..5) {
                 val y = top + (bottom - top) * index / 6f
+
                 val leafDirection = if (index % 2 == 0) {
                     direction
                 } else {
@@ -389,7 +423,6 @@ private fun HeaderVines(
     }
 }
 
-// One square. badge is a count shown in a red circle in the corner (hidden when 0).
 @Composable
 private fun FeatureTile(
     title: String,
@@ -421,7 +454,7 @@ private fun FeatureTile(
                 fontSize = 44.sp
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
             Text(
                 text = title,
@@ -438,14 +471,21 @@ private fun FeatureTile(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(10.dp)
-                    .defaultMinSize(minWidth = 28.dp, minHeight = 28.dp)
+                    .defaultMinSize(
+                        minWidth = 28.dp,
+                        minHeight = 28.dp
+                    )
                     .clip(CircleShape)
                     .background(CampusRed)
                     .padding(horizontal = 7.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (badge > 99) "99+" else badge.toString(),
+                    text = if (badge > 99) {
+                        "99+"
+                    } else {
+                        badge.toString()
+                    },
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold

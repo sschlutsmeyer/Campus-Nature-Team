@@ -59,10 +59,10 @@ import com.example.campusexplorer.ui.feed.PlusIcon
 import java.util.Calendar
 import java.util.Date
 
-// The Messages square's screen: your chats with friends, newest first. Unread chats are bold with
-// a red dot. "New" starts a chat with a friend.
 @Composable
-fun MessagesScreen(modifier: Modifier = Modifier) {
+fun MessagesScreen(
+    modifier: Modifier = Modifier
+) {
     val session = LocalSession.current
     val social = LocalSocial.current
     val nav = LocalNavigator.current
@@ -71,67 +71,162 @@ fun MessagesScreen(modifier: Modifier = Modifier) {
     if (!session.hasAccount || myUid == null) {
         GuestNotice(
             title = "Messages",
-            message = "Log in or sign up to message your friends. Once someone accepts your friend request, you can chat here.",
+            message =
+                "Log in or sign up to message your friends. " +
+                        "Once someone accepts your friend request, you can chat here.",
             onLogIn = { nav.open(Feature.Account) },
-            modifier = modifier,
+            modifier = modifier
         )
         return
     }
 
-    var picking by rememberSaveable { mutableStateOf(false) }
-    val chats = LocalChats.current.filter { it.otherUid !in social.hidden && it.lastMessageAt != null }
+    var picking by rememberSaveable {
+        mutableStateOf(false)
+    }
 
-    Column(modifier.fillMaxSize().background(Color.White)) {
+    val chats = LocalChats.current.filter {
+        it.otherUid !in social.hidden && it.lastMessageAt != null
+    }
+
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(Color.White)
+    ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = 16.dp,
+                    end = 12.dp,
+                    top = 14.dp,
+                    bottom = 10.dp
+                ),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Messages", color = FeedText, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text("Chat with your friends", color = Turquoise, fontSize = 14.sp)
+                Text(
+                    text = "Messages",
+                    color = FeedText,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = "Chat with your friends",
+                    color = Turquoise,
+                    fontSize = 14.sp
+                )
             }
+
             Button(
                 onClick = { picking = true },
-                colors = ButtonDefaults.buttonColors(containerColor = Turquoise, contentColor = Color.White),
-                contentPadding = PaddingValues(start = 14.dp, end = 18.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Turquoise,
+                    contentColor = Color.White
+                ),
+                contentPadding = PaddingValues(
+                    start = 14.dp,
+                    end = 18.dp
+                )
             ) {
-                Icon(PlusIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(
+                    imageVector = PlusIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+
                 Spacer(Modifier.width(6.dp))
-                Text("New", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+
+                Text(
+                    text = "New",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
-        HorizontalDivider(color = LightGreen, thickness = 2.dp)
+
+        HorizontalDivider(
+            color = LightGreen,
+            thickness = 2.dp
+        )
 
         if (chats.isEmpty()) {
             Column(
-                Modifier.fillMaxSize().padding(28.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+                verticalArrangement = Arrangement.Center
             ) {
-                Text("💬", fontSize = 44.sp)
-                Spacer(Modifier.height(10.dp))
-                Text("No messages yet", color = FeedText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
                 Text(
-                    if (social.friends.isEmpty()) {
-                        "You can message friends. Add friends from their profile (tap their name on a post), " +
-                            "or use Find people on your profile."
+                    text = "💬",
+                    fontSize = 44.sp
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                Text(
+                    text = "No messages yet",
+                    color = FeedText,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    text = if (social.friends.isEmpty()) {
+                        "You can message friends. " +
+                                "Add friends from their profile " +
+                                "(tap their name on a post), " +
+                                "or open the Friends screen."
                     } else {
-                        "Tap New to message one of your ${social.friends.size} ${if (social.friends.size == 1) "friend" else "friends"}."
+                        val count = social.friends.size
+                        val word = if (count == 1) "friend" else "friends"
+                        "Tap New to message one of your $count $word."
                     },
                     color = FeedMuted,
-                    textAlign = TextAlign.Center,
+                    textAlign = TextAlign.Center
                 )
+
                 Spacer(Modifier.height(16.dp))
+
                 Button(
-                    onClick = { if (social.friends.isEmpty()) nav.open(Feature.Account) else picking = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Turquoise, contentColor = Color.White),
-                ) { Text(if (social.friends.isEmpty()) "Find friends" else "Message a friend") }
+                    onClick = {
+                        if (social.friends.isEmpty()) {
+                            nav.open(Feature.Friends)
+                        } else {
+                            picking = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Turquoise,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        if (social.friends.isEmpty()) {
+                            "Find friends"
+                        } else {
+                            "Message a friend"
+                        }
+                    )
+                }
             }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
-                items(chats, key = { it.id }) { chat ->
-                    ChatRow(chat, myUid, onClick = { nav.openChat(chat.otherUid) })
+                items(
+                    items = chats,
+                    key = { it.id }
+                ) { chat ->
+                    ChatRow(
+                        chat = chat,
+                        myUid = myUid,
+                        onClick = {
+                            nav.openChat(chat.otherUid)
+                        }
+                    )
                 }
             }
         }
@@ -140,28 +235,48 @@ fun MessagesScreen(modifier: Modifier = Modifier) {
     if (picking) {
         UserListDialog(
             title = "New message",
-            uids = social.friends.filter { it !in social.hidden },
-            emptyText = "You can message friends. Add friends from their profile, or use Find people on your profile.",
+            uids = social.friends.filter {
+                it !in social.hidden
+            },
+            emptyText =
+                "You can message friends. " +
+                        "Add friends from their profile, " +
+                        "or open the Friends screen.",
             onDismiss = { picking = false },
-            onOpenUser = nav.openChat,
+            onOpenUser = nav.openChat
         )
     }
 }
 
-// One chat: picture, name, the latest message, and when it was sent.
 @Composable
-private fun ChatRow(chat: ChatSummary, myUid: String, onClick: () -> Unit) {
+private fun ChatRow(
+    chat: ChatSummary,
+    myUid: String,
+    onClick: () -> Unit
+) {
     val profile = rememberUserProfile(chat.otherUid)
     val context = LocalContext.current
+
     Row(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClickLabel = "Open chat", onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(
+                onClickLabel = "Open chat",
+                onClick = onClick
+            )
+            .padding(
+                horizontal = 16.dp,
+                vertical = 10.dp
+            ),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Box {
-            UserAvatar(chat.otherUid, 52.dp, profile = profile)
+            UserAvatar(
+                uid = chat.otherUid,
+                size = 52.dp,
+                profile = profile
+            )
+
             if (chat.unread) {
                 Box(
                     Modifier
@@ -169,67 +284,119 @@ private fun ChatRow(chat: ChatSummary, myUid: String, onClick: () -> Unit) {
                         .size(15.dp)
                         .clip(CircleShape)
                         .background(CampusRed)
-                        .border(2.dp, Color.White, CircleShape)
+                        .border(
+                            width = 2.dp,
+                            color = Color.White,
+                            shape = CircleShape
+                        )
                 )
             }
         }
+
         Spacer(Modifier.width(12.dp))
+
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    profile?.username ?: fallbackName(chat.otherUid),
+                    text = profile?.username
+                        ?: fallbackName(chat.otherUid),
                     color = FeedText,
                     fontSize = 16.sp,
-                    fontWeight = if (chat.unread) FontWeight.Bold else FontWeight.SemiBold,
+                    fontWeight = if (chat.unread) {
+                        FontWeight.Bold
+                    } else {
+                        FontWeight.SemiBold
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f)
                 )
+
                 Text(
-                    chatListTime(context, chat.lastMessageAt),
-                    color = if (chat.unread) Turquoise else FeedMuted,
-                    fontSize = 12.sp,
+                    text = chatListTime(
+                        context,
+                        chat.lastMessageAt
+                    ),
+                    color = if (chat.unread) {
+                        Turquoise
+                    } else {
+                        FeedMuted
+                    },
+                    fontSize = 12.sp
                 )
             }
+
             Text(
-                when {
+                text = when {
                     chat.lastMessage.isEmpty() -> "Message unsent"
                     chat.lastSender == myUid -> "You: ${chat.lastMessage}"
                     else -> chat.lastMessage
                 },
-                color = if (chat.unread) FeedText else FeedMuted,
-                fontWeight = if (chat.unread) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (chat.unread) {
+                    FeedText
+                } else {
+                    FeedMuted
+                },
+                fontWeight = if (chat.unread) {
+                    FontWeight.SemiBold
+                } else {
+                    FontWeight.Normal
+                },
                 fontSize = 14.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
-// Short times for the chat list: "3:41 PM" today, "Yesterday", the weekday this week, or "Nov 3".
-internal fun chatListTime(context: android.content.Context, date: Date?): String {
+internal fun chatListTime(
+    context: android.content.Context,
+    date: Date?
+): String {
     if (date == null) return ""
+
     val now = Calendar.getInstance()
-    val then = Calendar.getInstance().apply { time = date }
+
+    val then = Calendar.getInstance().apply {
+        time = date
+    }
+
     val days = daysBetween(then, now)
+
     return when {
-        days == 0 -> DateFormat.getTimeFormat(context).format(date)
+        days == 0 ->
+            DateFormat.getTimeFormat(context).format(date)
+
         days == 1 -> "Yesterday"
-        days in 2..6 -> DateFormat.format("EEE", date).toString()
-        then.get(Calendar.YEAR) == now.get(Calendar.YEAR) -> DateFormat.format("MMM d", date).toString()
-        else -> DateFormat.format("MMM d, yyyy", date).toString()
+
+        days in 2..6 ->
+            DateFormat.format("EEE", date).toString()
+
+        then.get(Calendar.YEAR) == now.get(Calendar.YEAR) ->
+            DateFormat.format("MMM d", date).toString()
+
+        else ->
+            DateFormat.format("MMM d, yyyy", date).toString()
     }
 }
 
-// Whole calendar days from a to b (0 when they're the same day).
-internal fun daysBetween(a: Calendar, b: Calendar): Int {
-    fun startOfDay(c: Calendar) = (c.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-    // Rounded, because a day is 23 or 25 hours long when the clocks change.
-    return Math.round((startOfDay(b) - startOfDay(a)) / (24.0 * 60 * 60 * 1000)).toInt()
+internal fun daysBetween(
+    a: Calendar,
+    b: Calendar
+): Int {
+    fun startOfDay(c: Calendar): Long =
+        (c.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+    return Math.round(
+        (startOfDay(b) - startOfDay(a)) /
+                (24.0 * 60 * 60 * 1000)
+    ).toInt()
 }

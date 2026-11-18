@@ -19,14 +19,6 @@ import java.util.Date
 internal val FeedText = Color(0xFF294C39)
 internal val FeedMuted = Color(0xFF65756C)
 
-// How a post's or comment's author is shown. Accounts are anonymous for now, so other users get a
-// short name made from their id. It stays the same for a user every time.
-internal fun authorLabel(uid: String?, myUid: String?): String = when {
-    uid == null -> "Unknown explorer"
-    uid == myUid -> "You"
-    else -> "Explorer ${uid.take(4).uppercase()}"
-}
-
 // "Just now", "5 minutes ago", "Yesterday", and so on.
 internal fun relativeTime(date: Date?): String {
     if (date == null) return "Just now"
@@ -144,3 +136,13 @@ internal val LeafIcon = ImageVector.Builder("FeedLeaf", 24.dp, 24.dp, 24f, 24f).
         close()
     }
 }.build()
+
+internal val BookmarkOutlineIcon = icon(
+    name = "BookmarkOutline",
+    pathData = "M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2zm0 15l-5-2.18L7 18V5h10v13z"
+)
+
+internal val BookmarkFilledIcon = icon(
+    name = "BookmarkFilled",
+    pathData = "M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"
+)

@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -13,10 +14,15 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,7 +48,6 @@ internal val CampusRed = Color(0xFFC6323A)
 internal val LeafGreen = Color(0xFF427A46)
 internal val Cream = Color(0xFFF7F8F2)
 internal val LightGreen = Color(0xFFE8F3EC)
-
 // Navigation icons require no additional icon dependencies.
 private val BackIcon: ImageVector = ImageVector.Builder(
     name = "Back",
@@ -108,14 +113,14 @@ private val HomeIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-private const val HOME = "Home"
+private val HOME = Destination.Home.key()
 
-// featureContent draws a feature's screen. Its second argument opens another feature, so screens can
-// link to each other (for example, a map pin's "View post" button opens the Feed).
+// content draws every screen except Home. Screens open each other with LocalNavigator (for example,
+// a map pin's "View post" button opens the Feed, and a post's author opens their profile).
 @Composable
 fun NatureQuestScreen(
-    featureContent: @Composable (feature: Feature, open: (Feature) -> Unit) -> Unit = { feature, _ ->
-        FeaturePlaceholder(feature)
+    content: @Composable (destination: Destination) -> Unit = { destination ->
+        if (destination is Destination.Screen) FeaturePlaceholder(destination.feature)
     }
 ) {
     // Replace the whole list when navigating so Compose observes changes.
@@ -132,7 +137,7 @@ fun NatureQuestScreen(
     val canGoForward = position < history.lastIndex
 
     fun open(screen: String) {
-        if (screen == current) return
+        if (screen == history[position]) return
 
         // Remove forward history before opening a new screen.
         history = history.take(position + 1) + screen
@@ -141,6 +146,23 @@ fun NatureQuestScreen(
 
     BackHandler(enabled = canGoBack) {
         position--
+    }
+
+    // What a guest was trying to do when asked to log in, while that question is showing.
+    var accountPrompt by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val session = LocalSession.current
+    val myUid by rememberUpdatedState(session.uid)
+    val navigator = remember {
+        AppNavigator(
+            open = { open(it.name) },
+            openUser = { uid ->
+                if (uid == myUid) open(Feature.Account.name) else open(Destination.Profile(uid).key())
+            },
+            openChat = { uid -> open(Destination.Chat(uid).key()) },
+            back = { if (position > 0) position-- },
+            requireAccount = { reason -> accountPrompt = reason },
+        )
     }
 
     // The app draws behind the keyboard (edge-to-edge), so text boxes near the bottom, like the
@@ -168,35 +190,66 @@ fun NatureQuestScreen(
             .consumeWindowInsets(innerPadding)
             .imePadding()
 
-        if (current == HOME) {
-            HomeScreen(
-                onFeatureSelected = { feature ->
-                    open(feature.name)
-                },
-                modifier = contentModifier
-            )
-        } else {
-            val feature = Feature.valueOf(current)
-
-            Column(
-                modifier = contentModifier
-                    .padding(horizontal = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Branding appears on Home; feature screens use their own titles.
-                NatureFrame(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    featureContent(feature) { open(it.name) }
-                }
-
-                Spacer(
-                    modifier = Modifier.height(16.dp)
+        CompositionLocalProvider(LocalNavigator provides navigator) {
+            when (val destination = destinationOf(current)) {
+                Destination.Home -> HomeScreen(
+                    onFeatureSelected = { feature ->
+                        open(feature.name)
+                    },
+                    modifier = contentModifier
                 )
+
+                else -> Column(
+                    modifier = contentModifier
+                        .padding(horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Branding appears on Home; feature screens use their own titles.
+                    NatureFrame(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+
+                        // A new screen for each destination, so nothing carries over between
+                        // two users' profiles or two chats.
+                        key(current) {
+                            content(destination)
+                        }
+                    }
+
+                    Spacer(
+                        modifier = Modifier.height(16.dp)
+                    )
+                }
             }
         }
+    }
+
+    accountPrompt?.let { reason ->
+        AlertDialog(
+            onDismissRequest = { accountPrompt = null },
+            title = { Text(if (session.needsUsername) "Finish signing up" else "Log in to $reason") },
+            text = {
+                Text(
+                    if (session.needsUsername) {
+                        "Choose a username to finish setting up your account, then you can $reason."
+                    } else {
+                        "You're exploring as a guest. Log in or sign up to $reason. As a guest, you can " +
+                            "still take photos, save pins, and see everyone's posts."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    accountPrompt = null
+                    open(Feature.Account.name)
+                }) { Text(if (session.needsUsername) "Choose a username" else "Log In / Sign Up") }
+            },
+            dismissButton = {
+                TextButton(onClick = { accountPrompt = null }) { Text("Not now") }
+            },
+        )
     }
 }
 

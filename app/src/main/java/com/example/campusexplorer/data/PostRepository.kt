@@ -20,6 +20,9 @@ const val POST_DESCRIPTION_MAX = 2000
 const val COMMENT_MAX = 500
 
 // One post in the feed. A photo post shares one of its author's photos; a text post has no photo.
+
+val POST_CATEGORIES = listOf("Plants", "Animals", "Fungi", "Landscape", "Other")
+
 data class FeedPost(
     val id: String,
 
@@ -27,6 +30,7 @@ data class FeedPost(
     val uid: String,
     val title: String,
     val description: String,
+    val category: String = "Other",
     val createdAt: Date?,
 
     // The shared photo's id, or null for a text-only post. A photo post's id is the same as its
@@ -41,9 +45,11 @@ data class FeedPost(
     val photoTakenAt: Date?,
 
     // The ids of the users who liked and disliked it. A user can be in at most one.
+    val bookmarkedBy: List<String> = emptyList(),
     val likedBy: Set<String>,
     val dislikedBy: Set<String>,
     val commentCount: Int,
+    val identification: PostIdentification? = null,
 ) {
 
     // The shared photo in the form the image loaders and the map use, or null for a text post.
@@ -110,6 +116,23 @@ object PostRepository {
         awaitClose { registration.remove() }
     }
 
+    // Live list of one user's posts, newest first (for their profile). Sorted here to avoid needing
+    // a composite index.
+    fun observeUserPosts(uid: String): Flow<List<FeedPost>> = callbackFlow {
+        PhotoRepository.ensureSignedIn()
+        val registration = posts.whereEqualTo("uid", uid).addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.w(TAG, "Post listener for user $uid failed", error)
+                close(error)
+                return@addSnapshotListener
+            }
+            val list = snapshot?.documents.orEmpty().mapNotNull(::toPost)
+                .sortedByDescending { it.createdAt?.time ?: Long.MAX_VALUE }
+            trySend(list)
+        }
+        awaitClose { registration.remove() }
+    }
+
     // Live view of one post, or null if it doesn't exist (or was deleted).
     fun observePost(postId: String): Flow<FeedPost?> = callbackFlow {
         PhotoRepository.ensureSignedIn()
@@ -126,15 +149,20 @@ object PostRepository {
 
     // Publishes a post and returns its id. If a photo is given, it's shared with the post and its
     // pin is renamed to the post's title (if different), so the pin and post always match.
-    suspend fun createPost(title: String, description: String, photo: NaturePhoto?): String {
+    suspend fun createPost(
+        title: String, description: String, photo: NaturePhoto?, category: String = "Other",
+        identification: PostIdentification? = null,
+    ): String {
         val uid = PhotoRepository.ensureSignedIn()
         val cleanTitle = cleanTitle(title)
         val cleanDescription = cleanDescription(description)
+        val selectedCategory = cleanCategory(identification?.category ?: category)
+        val identificationFields = identification?.toFields()
 
         // Text-only post: a new id and nothing else to update.
         if (photo == null) {
             val postRef = posts.document()
-            postRef.set(newPostData(uid, cleanTitle, cleanDescription, photo = null)).await()
+            postRef.set(newPostData(uid, cleanTitle, cleanDescription, null, selectedCategory, identificationFields)).await()
             return postRef.id
         }
 
@@ -148,7 +176,7 @@ object PostRepository {
             val current = transaction.get(photoRef)
             check(current.exists()) { "This photo was deleted." }
 
-            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo))
+            transaction.set(postRef, newPostData(uid, cleanTitle, cleanDescription, photo, selectedCategory, identificationFields))
             if (current.getString("caption") != cleanTitle) {
                 transaction.update(photoRef, "caption", cleanTitle)
             }
@@ -157,11 +185,19 @@ object PostRepository {
     }
 
     // Changes your post's title and description. A new title also renames the shared photo's pin.
-    suspend fun updatePost(post: FeedPost, title: String, description: String) {
+    suspend fun updatePost(
+        post: FeedPost, title: String, description: String, category: String = post.category,
+        identification: PostIdentification? = post.identification,
+    ) {
         val uid = PhotoRepository.ensureSignedIn()
         check(post.uid == uid) { "You can only edit your own posts." }
         val newTitle = cleanTitle(title)
-        val changes = mapOf("title" to newTitle, "description" to cleanDescription(description))
+        val changes = mapOf(
+            "title" to newTitle,
+            "description" to cleanDescription(description),
+            "category" to cleanCategory(identification?.category ?: category),
+            "identification" to identification?.toFields(),
+        )
         val postRef = posts.document(post.id)
 
         // No pin to rename: just update the post.
@@ -196,6 +232,18 @@ object PostRepository {
             Reaction.NONE -> FieldValue.arrayRemove(uid) to FieldValue.arrayRemove(uid)
         }
         posts.document(post.id).update("likedBy", likes, "dislikedBy", dislikes).await()
+    }
+
+    // Bookmarks or unbookmarks a post for the signed-in user.
+    suspend fun toggleBookmark(post: FeedPost) {
+        val uid = PhotoRepository.ensureSignedIn()
+        val isBookmarked = uid in post.bookmarkedBy
+        val update = if (isBookmarked) {
+            FieldValue.arrayRemove(uid)
+        } else {
+            FieldValue.arrayUnion(uid)
+        }
+        posts.document(post.id).update("bookmarkedBy", update).await()
     }
 
     // Live list of a post's comments, oldest first.
@@ -276,10 +324,15 @@ object PostRepository {
     }
 
     // A new post's fields. Every field is always written (null when unused) so the rules can check them.
-    private fun newPostData(uid: String, title: String, description: String, photo: NaturePhoto?) = mapOf(
+    private fun newPostData(
+        uid: String, title: String, description: String, photo: NaturePhoto?, category: String,
+        identification: Map<String, Any>?,
+    ) = mapOf(
         "uid" to uid,
         "title" to title,
         "description" to description,
+        "category" to category,
+        "identification" to identification,
         "createdAt" to FieldValue.serverTimestamp(),
         "photoId" to photo?.id,
         "storagePath" to photo?.storagePath,
@@ -290,6 +343,10 @@ object PostRepository {
         "dislikedBy" to emptyList<String>(),
         "commentCount" to 0,
     )
+
+    private fun cleanCategory(category: String) = category.also {
+        require(it in POST_CATEGORIES) { "Choose a valid category." }
+    }
 
     private fun cleanTitle(title: String) = title.trim().also {
         require(it.isNotEmpty()) { "Give your post a title." }
@@ -310,6 +367,7 @@ object PostRepository {
             uid = uid,
             title = doc.getString("title").orEmpty(),
             description = doc.getString("description").orEmpty(),
+            category = doc.getString("category")?.takeIf { it.isNotBlank() } ?: "Other",
 
             // A brand-new post's time is set by the server. Until then, use the phone's estimate.
             createdAt = doc.getTimestamp("createdAt", ServerTimestampBehavior.ESTIMATE)?.toDate(),
@@ -320,7 +378,11 @@ object PostRepository {
             photoTakenAt = doc.getTimestamp("photoTakenAt")?.toDate(),
             likedBy = doc.stringSet("likedBy"),
             dislikedBy = doc.stringSet("dislikedBy"),
+            bookmarkedBy = doc.stringSet("bookmarkedBy").toList(),
             commentCount = (doc.getLong("commentCount") ?: 0L).toInt().coerceAtLeast(0),
+            identification = PostIdentification.fromFields(
+                doc.get("identification"), doc.getString("category") ?: "Other",
+            ),
         )
     }
 

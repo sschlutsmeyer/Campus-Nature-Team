@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -60,8 +61,10 @@ import com.example.campusexplorer.data.NaturePhoto
 import com.example.campusexplorer.data.PhotoRepository
 import com.example.campusexplorer.data.PostRepository
 import com.example.campusexplorer.ui.CampusRed
+import com.example.campusexplorer.ui.PhotoImportHost
 import com.example.campusexplorer.ui.Turquoise
-import com.example.campusexplorer.ui.feed.authorLabel
+import com.example.campusexplorer.ui.LocalSocial
+import com.example.campusexplorer.ui.account.rememberDisplayName
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
@@ -127,9 +130,11 @@ fun MapScreen(
     }.collectAsStateWithLifecycle(emptyList())
 
     // Which of your photos are posted, and other users' posted photos (only when switched on).
+    // Pins from people you've blocked, or who've blocked you, are hidden.
+    val hidden = LocalSocial.current.hidden
     val myPostedIds = posts.filter { it.uid == uid }.mapTo(HashSet()) { it.id }
     val otherPhotos = if (showAllPins) {
-        posts.filter { it.uid != uid && it.hasLocation }.mapNotNull { it.photo }
+        posts.filter { it.uid != uid && it.hasLocation && it.uid !in hidden }.mapNotNull { it.photo }
     } else emptyList()
 
     // Everything in the list (your photos without a location too), newest first.
@@ -192,6 +197,17 @@ fun MapScreen(
                     onCheckedChange = onShowAllPinsChange,
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
                 )
+
+                // Add a photo from the camera roll as a pin, then zoom to it.
+                val addPhotoModifier = Modifier.align(Alignment.BottomStart).padding(16.dp)
+                PhotoImportHost(
+                    onMessage = onMessage,
+                    onImported = { _, location ->
+                        if (location != null) focusPoint = GeoPoint(location.latitude, location.longitude)
+                    },
+                ) { startImport ->
+                    Button(onClick = startImport, modifier = addPhotoModifier) { Text("Add Photo") }
+                }
             }
 
             // Header with the pin counts and an arrow. Tap it to hide or show the list,
@@ -247,7 +263,7 @@ fun MapScreen(
                         item {
                             Text(
                                 if (showAllPins) "No pins yet. Photos show up here once they're posted to the feed."
-                                else "No pins yet. Take a photo with the Camera to drop your first pin.",
+                                else "No pins yet. Take a photo with the Camera, or tap Add Photo, to drop your first pin.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             )
@@ -257,7 +273,7 @@ fun MapScreen(
                         val mine = photo.uid != null && photo.uid == uid
                         PhotoPinRow(
                             photo = photo,
-                            owner = authorLabel(photo.uid, uid),
+                            owner = if (mine) "You" else rememberDisplayName(photo.uid),
                             mine = mine,
                             posted = !mine || photo.id in myPostedIds,
                             onClick = { selectedPhoto = photo },

@@ -52,7 +52,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.campusexplorer.data.CameraRoll
 import com.example.campusexplorer.data.LocalPhotoStore
 import com.example.campusexplorer.data.LocationHelper
 import com.example.campusexplorer.data.PhotoRepository
@@ -66,9 +68,17 @@ import kotlinx.coroutines.withContext
 // Label for this file's messages in Logcat.
 private const val TAG = "CameraScreen"
 
+// Where the "Save to camera roll" choice is remembered.
+private const val PREFS = "camera"
+private const val PREF_CAMERA_ROLL = "save_to_camera_roll"
+
 // The Camera tab: asks for permission, shows the camera, then the review screen.
 @Composable
-fun CameraScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun CameraScreen(
+    onMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onPostToFeed: ((String) -> Unit)? = null,
+) {
 
     val context = LocalContext.current
 
@@ -121,7 +131,7 @@ fun CameraScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
 
         CameraCapture(onCaptured = { captured = it }, onMessage = onMessage, modifier = modifier)
 
-    // Photo taken: show the review screen.
+        // Photo taken: show the review screen.
     } else {
 
         PhotoReview(
@@ -134,6 +144,14 @@ fun CameraScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
             onSaved = {
                 captured = null
                 onMessage("Photo saved!")
+            },
+            onPostToFeed = if (onPostToFeed != null) {
+                { photoId ->
+                    captured = null
+                    onPostToFeed(photoId)
+                }
+            } else {
+                null
             },
             onMessage = onMessage,
             modifier = modifier,
@@ -218,7 +236,7 @@ private fun CameraCapture(
     }
 }
 
-// Shows the photo just taken with a caption box and Retake / Save buttons.
+// Shows the photo just taken with a caption box and Retake / Save / Save & Post buttons.
 @Composable
 private fun PhotoReview(
     photo: Bitmap,
@@ -226,6 +244,7 @@ private fun PhotoReview(
 
     // Called after a successful save.
     onSaved: () -> Unit,
+    onPostToFeed: ((String) -> Unit)? = null,
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -241,8 +260,85 @@ private fun PhotoReview(
     // Whether to also keep a copy of the photo on this phone.
     var keepLocalCopy by remember { mutableStateOf(true) }
 
+    // Whether to also add the photo to the phone's camera roll. Remembered for next time.
+    val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var saveToCameraRoll by remember { mutableStateOf(prefs.getBoolean(PREF_CAMERA_ROLL, false)) }
+    val setSaveToCameraRoll = { on: Boolean ->
+        saveToCameraRoll = on
+        prefs.edit { putBoolean(PREF_CAMERA_ROLL, on) }
+    }
+
+    // Android 9 and older need storage permission for the camera roll. Untick the box if refused.
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> setSaveToCameraRoll(granted) }
+
+    // Set once it's in the camera roll, so retrying a failed upload doesn't add it twice.
+    var savedToCameraRoll by remember { mutableStateOf(false) }
+
     // True while saving. Disables the buttons and shows a spinner.
     var saving by remember { mutableStateOf(false) }
+
+    val savePhoto: (Boolean) -> Unit = { postAfterSave ->
+        saving = true
+        scope.launch {
+            try {
+
+                // Shrink the photo to a smaller JPEG, off the main thread.
+                val jpeg = withContext(Dispatchers.Default) { photo.compressForUpload() }
+
+                // Current location, or null if unavailable.
+                val location = LocationHelper.currentLocation(context)
+
+                // Add it to the camera roll first, so it's kept even if the upload fails.
+                if (saveToCameraRoll && !savedToCameraRoll) {
+                    try {
+                        CameraRoll.save(context, jpeg, location)
+                        savedToCameraRoll = true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Couldn't save to camera roll", e)
+                        onMessage("Couldn't save to the camera roll: ${e.message}")
+                    }
+                }
+
+                // Upload the photo with its caption and location.
+                val photoId = PhotoRepository.save(jpeg, caption.trim(), location)
+
+                // Keep a copy on the phone if asked. The upload already worked, so a
+                // failure here only gets a warning.
+                if (keepLocalCopy) {
+                    try {
+                        LocalPhotoStore.save(context, photoId, jpeg)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Couldn't save local copy", e)
+                        onMessage("Uploaded, but couldn't save a copy on this phone")
+                    }
+                }
+
+                // Warn that a photo without a location won't get a map pin.
+                if (location == null) onMessage("Saved without location (permission off or GPS unavailable)")
+
+                if (postAfterSave && onPostToFeed != null) {
+                    onPostToFeed(photoId)
+                } else {
+                    onSaved()
+                }
+
+                // Leaving the screen stops the save. That's not an error to report.
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Save failed", e)
+                onMessage("Save failed: ${e.message}")
+            } finally {
+
+                // Runs whether the save worked or not.
+                saving = false
+            }
+        }
+    }
 
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
@@ -283,6 +379,26 @@ private fun PhotoReview(
             Text("Also save a copy on this phone", modifier = Modifier.padding(start = 8.dp))
         }
 
+        // Ask whether to add it to the phone's camera roll (Pictures/Nature Quest).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.toggleable(
+                value = saveToCameraRoll,
+                enabled = !saving,
+                role = Role.Checkbox,
+                onValueChange = { on ->
+                    if (on && CameraRoll.needsWritePermission(context)) {
+                        writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        setSaveToCameraRoll(on)
+                    }
+                },
+            ),
+        ) {
+            Checkbox(checked = saveToCameraRoll, onCheckedChange = null, enabled = !saving)
+            Text("Save to camera roll", modifier = Modifier.padding(start = 8.dp))
+        }
+
         // Buttons side by side.
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
 
@@ -290,49 +406,15 @@ private fun PhotoReview(
 
             Button(
                 enabled = !saving,
-                onClick = {
-                    saving = true
-                    scope.launch {
-                        try {
-
-                            // Shrink the photo to a smaller JPEG, off the main thread.
-                            val jpeg = withContext(Dispatchers.Default) { photo.compressForUpload() }
-
-                            // Current location, or null if unavailable.
-                            val location = LocationHelper.currentLocation(context)
-
-                            // Upload the photo with its caption and location.
-                            val photoId = PhotoRepository.save(jpeg, caption.trim(), location)
-
-                            // Keep a copy on the phone if asked. The upload already worked, so a
-                            // failure here only gets a warning.
-                            if (keepLocalCopy) {
-                                try {
-                                    LocalPhotoStore.save(context, photoId, jpeg)
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Couldn't save local copy", e)
-                                    onMessage("Uploaded, but couldn't save a copy on this phone")
-                                }
-                            }
-
-                            // Warn that a photo without a location won't get a map pin.
-                            if (location == null) onMessage("Saved without location (permission off or GPS unavailable)")
-                            onSaved()
-
-                            // Leaving the screen stops the save. That's not an error to report.
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Save failed", e)
-                            onMessage("Save failed: ${e.message}")
-                        } finally {
-
-                            // Runs whether the save worked or not.
-                            saving = false
-                        }
-                    }
-                },
+                onClick = { savePhoto(false) },
             ) { Text("Save") }
+
+            if (onPostToFeed != null) {
+                Button(
+                    enabled = !saving,
+                    onClick = { savePhoto(true) },
+                ) { Text("Save & Post") }
+            }
 
             // Spinner while saving.
             if (saving) {
